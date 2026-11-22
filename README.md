@@ -8,7 +8,7 @@ submodule, pinned to a commit whose bots have been evaluated.
 | Game | Engine (submodule) | Modules | Releases |
 |---|---|---|---|
 | Manille | `engines/manille` → [manil-bot](https://github.com/frigoow/manil-bot) (public) | `android/manille`, `app`, `desktop` | [manil-bot releases](https://github.com/frigoow/manil-bot/releases) |
-| Bulgarian Belot | `engines/belote` → belote-bot (private), `cpp/belot` | `android/belot`, `belot-app`, `belot-desktop` | not yet |
+| Bulgarian Belot | `engines/belote` → belote-bot (private), `cpp/belot` | `android/belot`, `belot-app`, `belot-desktop` | [cardtable releases](https://github.com/frigoow/cardtable/releases) |
 
 ## Layout
 
@@ -44,7 +44,7 @@ or the menu. It uses the same table themes as Manille, its café table first.
 ```bash
 git clone --recurse-submodules <this repo>      # engines/belote needs access to belote-bot
 scripts/fetch_models.sh                         # Manille's networks (not in git)
-scripts/belot_models.sh ../Belote               # Belot's networks, from a belote-bot checkout
+scripts/fetch_belot_models.sh                   # Belot's networks (or scripts/belot_models.sh ../Belote)
 cd android
 ./build.sh assembleDebug                        # both APKs
 ./gradlew :desktop:run                          # Manille on the desktop
@@ -69,6 +69,14 @@ the secret `MANIL_BOT_RELEASE_TOKEN`, a fine-grained token with write access
 to manil-bot's contents, and the existing `MANILLE_KEYSTORE_*` secrets copied
 to this repository.
 
-Belot has no release yet: it needs its own signing key (`BELOT_KEYSTORE_*`),
-a home for its networks (about 40 MB) and a release workflow. CI's `belot`
-job needs the secret `BELOTE_BOT_TOKEN` (read access to belote-bot).
+Belot is released here (this repository's releases), tagged `belot-vX.Y.Z`.
+Its networks are the release `belot-models-v1` (`scripts/fetch_belot_models.sh`).
+The signing key is `~/.android/belot-release.jks` on the machine that made
+v0.1.0, with its passwords in `belot-release.properties` beside it: keep a
+backup, because an APK signed with any other key cannot update an installed
+Belot. Pushing a `belot-v*` tag builds everything in CI
+(`belot-release.yml`, including the Windows and macOS packages) once the
+secrets `BELOTE_BOT_DEPLOY_KEY` (a read-only deploy key of belote-bot, which
+CI's `belot` job needs as well) and `BELOT_KEYSTORE_B64`,
+`BELOT_KEYSTORE_PASSWORD`, `BELOT_KEY_ALIAS` (`belot`) and
+`BELOT_KEY_PASSWORD` are set; until then those jobs only warn.

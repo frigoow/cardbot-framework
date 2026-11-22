@@ -49,34 +49,36 @@ jobs:
         run: ./gradlew --no-daemon -Pmanille.skipAndroidApp=true :manille:desktopTest :desktop:compileKotlin
 
   # Bulgarian Belot: the C interface over engines/belote (private), then the
-  # Kotlin side on the desktop JVM through JNI. The private submodule needs a
-  # token that can read frigoow/belote-bot (secret BELOTE_BOT_TOKEN); the
-  # networks are not needed (without them the bots bid by rule and search
-  # without nets, as the tests allow).
+  # Kotlin side on the desktop JVM through JNI. The private submodule is read
+  # with a read-only deploy key of frigoow/belote-bot, stored here as the
+  # secret BELOTE_BOT_DEPLOY_KEY; without it the job only warns. The networks
+  # are not needed (without them the bots bid by rule and search without nets).
   belot:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - name: Belot engine (private submodule)
+        id: engine
         env:
-          TOKEN: ${{ secrets.BELOTE_BOT_TOKEN }}
-        run: |
-          if [ -z "$TOKEN" ]; then echo "::error::secret BELOTE_BOT_TOKEN is not set"; exit 1; fi
-          git -c "url.https://x-access-token:${TOKEN}@github.com/.insteadOf=https://github.com/" submodule update --init engines/belote
+          KEY: ${{ secrets.BELOTE_BOT_DEPLOY_KEY }}
+        run: scripts/ci_belote_submodule.sh
       - name: C++
+        if: steps.engine.outputs.ok == 'true'
         run: |
           cmake -B build-belot -S cpp/belot -DCMAKE_BUILD_TYPE=Release
           cmake --build build-belot -j
           ctest --test-dir build-belot --output-on-failure
       - uses: actions/setup-java@v5
+        if: steps.engine.outputs.ok == 'true'
         with:
           distribution: temurin
           java-version: '21'
       - name: Android SDK licences
+        if: steps.engine.outputs.ok == 'true'
         run: |
           sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdk" --licenses > /dev/null || true
       - name: Kotlin
+        if: steps.engine.outputs.ok == 'true'
         working-directory: android
         run: ./gradlew --no-daemon -Pmanille.skipAndroidApp=true :belot:desktopTest :belot-desktop:compileKotlin
-
