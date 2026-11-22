@@ -27,3 +27,14 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     target_link_libraries(cardbot_test_agents PRIVATE cardbot)
     add_test(NAME agents COMMAND cardbot_test_agents)
 endif()
+
+# The Python test module (the toy game's BatchEnv and the Q-GRU loader):
+#   cmake -B build -S cpp -DCARDBOT_PYTHON=ON -Dpybind11_DIR=$(python -c 'import pybind11; print(pybind11.get_cmake_dir())')
+option(CARDBOT_PYTHON "Build the toy game's Python module for python/tests" OFF)
+if(CARDBOT_PYTHON)
+    find_package(pybind11 CONFIG REQUIRED)
+    pybind11_add_module(mini_tricks_cpp tests/python/mini_tricks_module.cpp)
+    target_link_libraries(mini_tricks_cpp PRIVATE cardbot)
+    target_include_directories(mini_tricks_cpp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+endif()
+
