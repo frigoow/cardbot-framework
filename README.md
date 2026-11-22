@@ -49,7 +49,8 @@ See [android/README.md](android/README.md) for the toolchain (SDK, NDK, JDK).
 
 ## Releases
 
-Push the tag `manille-vX.Y.Z`. CI builds the signed APK and the three desktop
+For now Manille is still released from manil-bot itself, which holds the
+signing key. The workflow here is ready for when that moves: push the tag `manille-vX.Y.Z`. CI builds the signed APK and the three desktop
 packages and publishes them as release `vX.Y.Z` of manil-bot, at the engine
 commit they were built from, so the existing download links keep working.
 This needs the secret `MANIL_BOT_RELEASE_TOKEN`, a fine-grained token with
