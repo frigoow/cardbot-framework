@@ -58,38 +58,73 @@ tuned engines and take shared pieces one at a time.
 
 ## The game interface (C++)
 
+A plain type, not a base class (`cardbot/game.h`): the search copies it
+freely and nothing costs a virtual call.
+
 ```cpp
 #include "cardbot/game.h"
 
-struct MyGame {                       // copyable: the search copies it freely
+struct MyGame {                       // copyable
     using Action = int;               // cards 0..N-1, then bids, declarations ...
+    static constexpr int kPlayers = 4;
     int toMove() const;
     bool finished() const;
     std::vector<Action> legalActions() const;
     void apply(Action a);
-    double score(int team) const;     // when finished
-
-    using Observation = ...;          // what one seat knows
-    Observation observe(int seat) const;
-    // a full game consistent with an observation, from hidden hands the sampler drew
-    static MyGame fromWorld(const Observation&, const cardbot::Hands&);
+    double payoff(int seat) const;    // when finished, e.g. the seat's team margin
+    int team(int seat) const;
+    // the position with what `observer` cannot see redrawn consistently with what it knows
+    // (cardbot/sampler.h's HiddenDeal does the drawing)
+    MyGame determinize(int observer, std::mt19937_64& rng) const;
 };
-// optional, for steps 3 to 5:
-cardbot::Constraints constraints(const MyGame::Observation&);
-void encode(const MyGame::Observation&, cardbot::Features&);
 ```
+
+With that alone: `randomAgent`, `ismctsAgent`, `rolloutAgent` (flat
+determinized play-out search) and `duel` (`cardbot/agents.h`, `eval.h`).
+For training, an Encoder (`cardbot/env.h`) writes the networks' inputs:
+
+```cpp
+struct MyEncoder {
+    static constexpr int kStateDim, kPlyDim, kMaxPlies, kActionDim, kMaxLegal;
+    static constexpr int kPolicyDim;                                  // optional: fast-policy slots
+    MyGame newGame(std::mt19937_64&) const;
+    bool learns(const MyGame&) const;                                 // decisions the trainer makes
+    MyGame::Action autoAction(const MyGame&, std::mt19937_64&) const; // the others
+    int encode(const MyGame&, int seat, float* state, float* history) const;
+    void encodeAction(const MyGame&, int seat, MyGame::Action, float* out) const;
+    int actionSlot(const MyGame&, int seat, MyGame::Action) const;    // optional, with kPolicyDim
+    float reward(const MyGame&, int team) const;
+};
+
+PYBIND11_MODULE(mygame_cpp, m) {      // cardbot/python.h
+    cardbot::bindBatchEnv<MyGame, MyEncoder>(m, "BatchEnv");
+    cardbot::bindQGru(m);
+    cardbot::bindFastPolicy(m);
+}
+```
+
+A game with its own search builds it from `cardbot/search.h` (world draws
+with the game's weights, candidate racing, the Q blend) as Belot does.
 
 ## Python
 
 ```python
-import cardbot, mygame_cpp                      # pybind11 module from cardbot's template
-env = cardbot.Env(mygame_cpp, num_envs=2048)    # batched self-play over the C++ game
-cardbot.train.dmc(env, out="checkpoints/q", episodes=5_000_000)          # step 4
-cardbot.train.bidding(env, play="checkpoints/q", out="checkpoints/bid")  # step 5
-cardbot.train.dmc(env, init="checkpoints/q", bid="checkpoints/bid", out="checkpoints/q2")  # 6
-cardbot.train.distill(env, teacher="checkpoints/q2", out="checkpoints/fast")             # 7
-print(cardbot.eval.duel(env, a="search:fast=checkpoints/fast", b="ismcts:1000", deals=2000))  # 8
+import mygame_cpp
+from cardbot.models import QGRU, FastPolicy
+from cardbot.train import dmc, distill
+
+env = mygame_cpp.BatchEnv(2048, seed=1, threads=4)
+q = QGRU(env.STATE_DIM, env.PLY_DIM, env.ACTION_DIM)
+dmc.train(env, q, dmc.DMCConfig(rounds=2000))                       # step 4
+q.export_bin("q.bin", tag=b"MYQ1")
+fast = FastPolicy(env.STATE_DIM, env.POLICY_DIM)
+distill.train(env, q, fast, distill.DistillConfig(rounds=50))      # step 7
+fast.export_bin("fast.bin", tag=b"MYP1")
+# step 8, C++: rolloutAgent<MyGame>(fastPolicyAgent<MyGame, MyEncoder>(model)), or the game's own search
 ```
+
+Each trainer is a set of functions (collect, loss, train, evaluate) the game
+can replace one by one; the configs carry an `extra` dict for them.
 
 ## Order of work
 
@@ -100,11 +135,14 @@ and hint values bit for bit in C++; the same training curves for a
 fixed-seed run in Python).
 
 1. Network kernels: `cardbot/nn.h` (done, bit-identical).
-2. World sampler: `cardbot/sampler.h` (core done, bit-identical on Belot).
-3. The `Game` interface, `RandomAgent`, `IsmctsAgent`, the generic search
-   (`SearchAgent`) and endgame, with Belot as the first implementation.
-4. The Python package: environment template, models, DMC, bidding, refit,
-   distillation, export, evaluation; Belot's trainers become thin adapters.
+2. World sampler: `cardbot/sampler.h` (done, bit-identical on Belot).
+3. The `Game` interface, `randomAgent`, `ismctsAgent`, `rolloutAgent`, the
+   search building blocks (`cardbot/search.h`, bit-identical on Belot's
+   search) and duels (done; Belot plays through it). Still to come: the exact
+   endgame.
+4. The Python package: environment template, Q-GRU, DMC (done), fast policy
+   and its distillation with the C++ policy agent (done), bidding and refit
+   (next); Belot's trainers become thin adapters.
 5. A small example game (Whist-like) written from scratch against the
    interface, to prove the pipeline end to end for a game the framework has
    never seen, and the "new game" guide.

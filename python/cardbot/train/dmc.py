@@ -138,13 +138,10 @@ def train(env, model, cfg: DMCConfig, collect_fn=collect, loss_fn=q_loss, on_rou
     return model
 
 
-@torch.no_grad()
-def evaluate(env, model, seed: int = 7, device: str | None = None, opponent: str = "random") -> tuple[float, float]:
-    """The greedy network against `opponent` (random) on mirrored deals: each env's deal is
-    played twice with the teams swapped. Returns the network team's mean return per deal and
-    its 95% half-width over the env pairs."""
-    device = device or next(model.parameters()).device.type
-    model.eval()
+def play_mirrored(env, pick, seed: int = 7) -> tuple[float, float]:
+    """Team 0's and team 1's seats played by pick(obs, rng) -> action indices against uniformly
+    random play, each env's deal twice with the teams swapped. Returns pick's mean return per
+    deal and its 95% half-width over the env pairs."""
     totals = np.zeros(env.num_envs)
     for net_team in (0, 1):
         env.reset_all(seed)
@@ -153,11 +150,19 @@ def evaluate(env, model, seed: int = 7, device: str | None = None, opponent: str
             obs = env.observe()
             if not (obs["n_legal"] > 0).any():
                 break
-            greedy = choose(model, obs, 0.0, rng, device)
+            mine = pick(obs, rng)
             rand = (rng.random(env.num_envs) * np.maximum(obs["n_legal"], 1)).astype(np.int32)
-            idx = np.where(obs["team"] == net_team, greedy, rand).astype(np.int32)
+            idx = np.where(obs["team"] == net_team, mine, rand).astype(np.int32)
             done, reward = env.step(idx, auto_reset=False)
             totals += np.where(done, reward[:, net_team], 0.0) / 2.0
     mean = float(totals.mean())
     half = 1.96 * float(totals.std(ddof=1)) / math.sqrt(len(totals))
     return mean, half
+
+
+@torch.no_grad()
+def evaluate(env, model, seed: int = 7, device: str | None = None) -> tuple[float, float]:
+    """The greedy Q network against random play on mirrored deals (play_mirrored)."""
+    device = device or next(model.parameters()).device.type
+    model.eval()
+    return play_mirrored(env, lambda obs, rng: choose(model, obs, 0.0, rng, device), seed)

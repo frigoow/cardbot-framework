@@ -4,11 +4,13 @@
 //   PYBIND11_MODULE(mygame_cpp, m) {
 //       cardbot::bindBatchEnv<MyGame, MyEncoder>(m, "BatchEnv");
 //       cardbot::bindQGru(m);
+//       cardbot::bindFastPolicy(m);
 //   }
 //
 // BatchEnv(num_envs, seed, threads) in Python: .observe() -> dict of numpy
 // arrays, .step(action_idx, auto_reset) -> (done, reward[B, 2]), .reset_all(seed),
-// and the sizes as attributes (STATE_DIM, PLY_DIM, MAX_PLIES, ACTION_DIM, MAX_LEGAL).
+// and the sizes as attributes (STATE_DIM, PLY_DIM, MAX_PLIES, ACTION_DIM, MAX_LEGAL,
+// POLICY_DIM). observe()'s legal_slots are the legal actions' fast-policy slots.
 
 #include "cardbot/env.h"
 #include "cardbot/models.h"
@@ -36,6 +38,7 @@ void bindBatchEnv(py::module_& m, const char* name) {
         .def_property_readonly_static("MAX_PLIES", [](py::object) { return Enc::kMaxPlies; })
         .def_property_readonly_static("ACTION_DIM", [](py::object) { return Enc::kActionDim; })
         .def_property_readonly_static("MAX_LEGAL", [](py::object) { return Enc::kMaxLegal; })
+        .def_property_readonly_static("POLICY_DIM", [](py::object) { return policyDim<Enc>(); })
         .def("reset_all", &Env::resetAll, py::arg("seed"))
         .def("observe", [](const Env& env) {
             const py::ssize_t b = env.numEnvs();
@@ -45,10 +48,12 @@ void bindBatchEnv(py::module_& m, const char* name) {
             py::array_t<float> legal({b, py::ssize_t(Enc::kMaxLegal), py::ssize_t(Enc::kActionDim)});
             py::array_t<std::int32_t> n_legal(b);
             py::array_t<std::int32_t> team(b);
+            py::array_t<std::int32_t> slots({b, py::ssize_t(Enc::kMaxLegal)});
             {
                 py::gil_scoped_release release;
                 env.observe(state.mutable_data(), history.mutable_data(), n_plies.mutable_data(), legal.mutable_data(),
                             n_legal.mutable_data(), team.mutable_data());
+                env.legalSlots(slots.mutable_data());
             }
             py::dict d;
             d["state"] = state;
@@ -57,6 +62,7 @@ void bindBatchEnv(py::module_& m, const char* name) {
             d["legal_actions"] = legal;
             d["n_legal"] = n_legal;
             d["team"] = team;
+            d["legal_slots"] = slots;
             return d;
         })
         .def("step", [](Env& env, py::array_t<std::int32_t, py::array::c_style | py::array::forcecast> action_idx,
@@ -86,6 +92,24 @@ inline void bindQGru(py::module_& m) {
                              py::array_t<float, py::array::c_style | py::array::forcecast> legal, int n_legal) {
             py::array_t<float> out(n_legal);
             q.forwardQ(state.data(), history.data(), n_plies, legal.data(), n_legal, out.mutable_data());
+            return out;
+        });
+}
+
+/** FastPolicyModel for Python: load an exported file, run the C++ forward pass. */
+inline void bindFastPolicy(py::module_& m) {
+    py::class_<FastPolicyModel>(m, "FastPolicyModel")
+        .def(py::init<>())
+        .def("load", [](FastPolicyModel& p, const std::string& path, const std::string& tag) {
+            if (tag.size() != 4) throw std::invalid_argument("tag: 4 bytes");
+            return p.load(path, tag.c_str());
+        }, py::arg("path"), py::arg("tag") = "BGP1")
+        .def_property_readonly("state_dim", &FastPolicyModel::stateDim)
+        .def_property_readonly("out_dim", &FastPolicyModel::outDim)
+        .def("forward", [](const FastPolicyModel& p, py::array_t<float, py::array::c_style | py::array::forcecast> state) {
+            if (state.size() != p.stateDim()) throw std::invalid_argument("forward: state of stateDim floats");
+            py::array_t<float> out(p.outDim());
+            p.forward(state.data(), out.mutable_data());
             return out;
         });
 }

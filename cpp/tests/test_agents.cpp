@@ -42,6 +42,15 @@ int main() {
     std::printf("ISMCTS-300 vs random: %+.3f +- %.3f tricks per deal (better on %.0f%% of deals)\n", r3.mean, r3.ci95,
                 100 * r3.a_better);
     CHECK(r3.mean - r3.ci95 > 0);
+    // flat play-out search with random play-outs: beats random, same result for any thread count
+    cardbot::RolloutOptions ro;
+    ro.worlds = 16;
+    const auto r4 = cardbot::duel<G>(deal, cardbot::rolloutAgent<G>(cardbot::randomAgent<G>(), ro), cardbot::randomAgent<G>(), 150, 5, 4);
+    ro.threads = 3;
+    const auto r5 = cardbot::duel<G>(deal, cardbot::rolloutAgent<G>(cardbot::randomAgent<G>(), ro), cardbot::randomAgent<G>(), 150, 5, 1);
+    std::printf("rollout-16 vs random: %+.3f +- %.3f tricks per deal\n", r4.mean, r4.ci95);
+    CHECK(r4.mean - r4.ci95 > 0);
+    CHECK(r4.mean == r5.mean);
     if (failures) { std::fprintf(stderr, "%d check(s) failed\n", failures); return 1; }
     std::printf("cardbot agents: all checks passed\n");
     return 0;

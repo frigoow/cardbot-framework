@@ -2,10 +2,11 @@
 
 QGRU is the action-as-input Q network of the Manille and Belote bots: a state
 MLP and a GRU over the play history feed a residual trunk, and a dueling head
-scores every legal action from its features. export_bin() writes the layout
-cardbot/models.h reads (Bulgarian Belot's BGQ1 layout, with a 4-byte tag of
-the game's choosing). Sizes are the game's; layers are customizable by
-subclassing.
+scores every legal action from its features. FastPolicy is the small MLP
+distilled from it for the search's play-outs: state in, one logit per action
+slot out. Their export_bin() writes the layouts cardbot/models.h reads
+(Bulgarian Belot's BGQ1 and BGP1, with a 4-byte tag of the game's choosing).
+Sizes are the game's; layers are customizable by subclassing.
 """
 
 from __future__ import annotations
@@ -157,3 +158,29 @@ class QGRU(nn.Module):
             self.trunk1.export_weights(f)
             self.trunk2.export_weights(f)
             self.q_head.export_weights(f)
+
+
+class FastPolicy(nn.Module):
+    """logits over the game's action slots = fc3(relu(fc2(relu(fc1(state))))), for C++ play-outs."""
+
+    def __init__(self, state_dim: int, out_dim: int, h1: int = 256, h2: int = 128):
+        super().__init__()
+        self.state_dim, self.out_dim, self.h1, self.h2 = state_dim, out_dim, h1, h2
+        self.fc1 = nn.Linear(state_dim, h1)
+        self.fc2 = nn.Linear(h1, h2)
+        self.fc3 = nn.Linear(h2, out_dim)
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        return self.fc3(F.relu(self.fc2(F.relu(self.fc1(state)))))
+
+    def export_bin(self, path: str | Path, tag: bytes = b"BGP1", version: int = 1) -> None:
+        """The layout cardbot::FastPolicyModel::load reads: tag, 5 int32 sizes, then the three layers."""
+        if len(tag) != 4:
+            raise ValueError("tag must be 4 bytes")
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as f:
+            f.write(tag)
+            f.write(struct.pack("<5i", version, self.state_dim, self.h1, self.h2, self.out_dim))
+            for layer in (self.fc1, self.fc2, self.fc3):
+                write_linear(f, layer)
