@@ -265,6 +265,35 @@ fun Chip(text: String, color: Color) = Surface(shape = RoundedCornerShape(10.dp)
     Text(text, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
 }
 
+/** A round dealer puck ("D" / "Р") that sits on a seat avatar or beside the player's edge. */
+@Composable
+fun DealerBadge(modifier: Modifier = Modifier) = Surface(
+    modifier = modifier.size(19.dp),
+    shape = CircleShape,
+    color = Color(0xFFFFF6DE),
+    border = BorderStroke(1.5.dp, Gold),
+    shadowElevation = 4.dp,
+) {
+    Box(contentAlignment = Alignment.Center) {
+        Text(tl("D", "D", "Р"), color = Wood, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+    }
+}
+
+/** A compact dealer pill for the bottom (human) seat when the player dealt this hand. */
+@Composable
+fun DealerPill(modifier: Modifier = Modifier) = Surface(
+    modifier = modifier,
+    shape = RoundedCornerShape(12.dp),
+    color = Color.Black.copy(alpha = .45f),
+    border = BorderStroke(1.dp, Gold.copy(alpha = .75f)),
+) {
+    Row(Modifier.padding(horizontal = 7.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        DealerBadge()
+        Spacer(Modifier.width(5.dp))
+        Text(tl("Dealer", "Deler", "Раздаваш"), color = GoldBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
 @Composable
 fun Overlay(title: String, sub: String, content: @Composable ColumnScope.() -> Unit) = Box(Modifier.fillMaxSize().background(Color(0xB0000000)), contentAlignment = Alignment.Center) {
     Surface(modifier = Modifier.padding(18.dp).widthIn(max = 380.dp), shape = RoundedCornerShape(18.dp), color = Panel.copy(alpha = .97f),

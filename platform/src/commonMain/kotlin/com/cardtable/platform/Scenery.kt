@@ -285,3 +285,216 @@ fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMusicBox(time: Float) {
     }
 }
 
+/**
+ * Bulgarian Mehana (tavern) table props, drawn on Canvas:
+ * - Bottom-left: aged rakija glass on a woven shevitsa coaster (raises with "Наздраве!" on cheers)
+ * - Top-right: Trojan glazed ceramic pitcher (троянска стомна) with traditional wavy stripes
+ * - Top-left: flickering beeswax candle in a brass holder beside a folded embroidered cloth
+ * - Bottom-right: braided red-and-white Bulgarian martenitsa (мартеница) charm with tassels
+ */
+@Composable
+fun androidx.compose.foundation.layout.BoxScope.MehanaDecor(cheers: Int = 0) {
+    val anim = rememberInfiniteTransition(label = "mehana")
+    val flicker by anim.animateFloat(0f, 1f, infiniteRepeatable(tween(2400, easing = LinearEasing)), label = "flicker")
+    val nazdrave = remember { Animatable(0f) }
+    var toasted by remember { mutableStateOf(cheers) }
+    LaunchedEffect(cheers) {
+        if (cheers == toasted) return@LaunchedEffect
+        toasted = cheers
+        nazdrave.snapTo(0f); nazdrave.animateTo(1f, tween(1300, easing = LinearEasing)); nazdrave.snapTo(0f)
+    }
+    val p = nazdrave.value
+    fun ease(x: Float) = x.coerceIn(0f, 1f).let { it * it * (3 - 2 * it) }
+    val up = when { p <= 0f -> 0f; p < .25f -> ease(p / .25f); p < .7f -> 1f; else -> ease((1f - p) / .3f) }
+
+    // Bottom-left: rakija glass on a woven red-and-cream shevitsa coaster
+    Box(Modifier.align(Alignment.BottomStart).offset(x = 10.dp, y = (-8).dp).size(52.dp, 62.dp)) {
+        Canvas(Modifier.matchParentSize()) {
+            drawOval(Color(0x55120804).copy(alpha = .38f * (1f - .6f * up)), Offset(size.width * .08f, size.height * .77f),
+                androidx.compose.ui.geometry.Size(size.width * .86f, size.height * .20f))
+            drawOval(Color(0xFFF3E4C8), Offset(size.width * .06f, size.height * .73f),
+                androidx.compose.ui.geometry.Size(size.width * .88f, size.height * .20f))
+            drawOval(Color(0xFF9C1F24), Offset(size.width * .12f, size.height * .755f),
+                androidx.compose.ui.geometry.Size(size.width * .76f, size.height * .15f),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
+        }
+        Canvas(Modifier.align(Alignment.TopCenter).size(30.dp, 50.dp).graphicsLayer {
+            transformOrigin = TransformOrigin(.5f, 1f)
+            translationY = -18.dp.toPx() * up
+            translationX = 5.dp.toPx() * up
+            rotationZ = 12f * up
+            scaleX = 1f + .12f * up; scaleY = scaleX
+        }) { drawRakijaGlass() }
+        if (p > 0f) {
+            val a = ease((p - .22f) / .1f) * ease((.95f - p) / .15f)
+            Text(tl("Cheers!", "Schol!", "Наздраве!"), color = GoldBright, fontSize = 15.sp, fontWeight = FontWeight.Black,
+                modifier = Modifier.align(Alignment.TopStart).offset(x = 34.dp, y = (-46).dp)
+                    .wrapContentSize(unbounded = true)
+                    .graphicsLayer { alpha = a; scaleX = .7f + .3f * a; scaleY = scaleX; rotationZ = -8f })
+        }
+    }
+
+    // Top-right: Trojan painted pottery pitcher (троянска керамика)
+    Canvas(Modifier.align(Alignment.TopEnd).offset(x = (-10).dp, y = 10.dp).size(48.dp, 62.dp)) {
+        drawTrojanPitcher()
+    }
+
+    // Top-left: flickering beeswax candle in a brass saucer
+    Canvas(Modifier.align(Alignment.TopStart).offset(x = 12.dp, y = 10.dp).size(46.dp, 56.dp)) {
+        drawMehanaCandle(flicker)
+    }
+
+    // Bottom-right: Bulgarian braided red-and-white martenitsa (мартеница)
+    Canvas(Modifier.align(Alignment.BottomEnd).offset(x = (-12).dp, y = (-8).dp).size(64.dp, 46.dp)) {
+        drawMartenitsa()
+    }
+}
+
+fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRakijaGlass() {
+    val w = size.width; val h = size.height
+    val topY = h * .14f; val botY = h * .95f; val inset = w * .15f
+    fun xl(y: Float) = inset * (y - topY) / (botY - topY)
+    // golden aged grape rakija
+    val liqTop = h * .38f
+    val liq = androidx.compose.ui.graphics.Path().apply {
+        moveTo(xl(liqTop) + 1.5f, liqTop); lineTo(w - xl(liqTop) - 1.5f, liqTop)
+        lineTo(w - inset - 1.5f, botY - h * .15f); lineTo(inset + 1.5f, botY - h * .15f); close()
+    }
+    drawPath(liq, Brush.verticalGradient(listOf(Color(0xFFF6CF6B), Color(0xFFD99528), Color(0xFFA86410)), startY = liqTop, endY = botY))
+    drawOval(Color(0x88FFF6D6), Offset(xl(liqTop) + 2f, liqTop - h * .03f),
+        androidx.compose.ui.geometry.Size(w - 2 * xl(liqTop) - 4f, h * .06f))
+    // heavy crystal base + glass rim
+    drawRect(Color(0x66FFFFFF), Offset(inset, botY - h * .15f), androidx.compose.ui.geometry.Size(w - 2 * inset, h * .15f))
+    val glass = androidx.compose.ui.graphics.Path().apply {
+        moveTo(0f, topY); lineTo(w, topY); lineTo(w - inset, botY); lineTo(inset, botY); close()
+    }
+    drawPath(glass, Color.White.copy(alpha = .6f), style = androidx.compose.ui.graphics.drawscope.Stroke(1.5f))
+    drawLine(Color.White.copy(alpha = .55f), Offset(w * .22f, h * .24f), Offset(w * .28f, h * .80f), strokeWidth = w * .08f)
+}
+
+fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTrojanPitcher() {
+    val w = size.width; val h = size.height
+    val sz = { a: Float, b: Float -> androidx.compose.ui.geometry.Size(a, b) }
+    // shadow
+    drawOval(Color(0x55120804), Offset(w * .14f, h * .84f), sz(w * .72f, h * .14f))
+    // handle on right
+    drawArc(Color(0xFF7B3E1D), -60f, 165f, false, Offset(w * .54f, h * .24f), sz(w * .36f, h * .40f),
+        style = androidx.compose.ui.graphics.drawscope.Stroke(w * .09f))
+    // rounded clay belly
+    val cx = w * .46f; val cy = h * .60f
+    drawOval(Brush.horizontalGradient(listOf(Color(0xFF6B3116), Color(0xFFA95729), Color(0xFF8C411D), Color(0xFF4F220E)),
+        startX = w * .12f, endX = w * .80f), Offset(w * .12f, h * .34f), sz(w * .68f, h * .56f))
+    // neck + lip
+    drawRoundRect(Brush.horizontalGradient(listOf(Color(0xFF6B3116), Color(0xFFA95729), Color(0xFF5A2711)),
+        startX = w * .30f, endX = w * .62f), Offset(w * .31f, h * .10f), sz(w * .30f, h * .28f),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(3f, 3f))
+    drawOval(Color(0xFFC4733B), Offset(w * .27f, h * .07f), sz(w * .38f, h * .09f))
+    drawOval(Color(0xFF2B1208), Offset(w * .32f, h * .09f), sz(w * .28f, h * .05f))
+    // iconic Trojan ceramic stripes (cream, forest green, ochre wavy drips)
+    val bandY = cy - h * .05f
+    drawLine(Color(0xFFF3E6C8), Offset(w * .15f, bandY), Offset(w * .77f, bandY), strokeWidth = 2.4f)
+    drawLine(Color(0xFF2E6B3E), Offset(w * .14f, bandY + h * .07f), Offset(w * .78f, bandY + h * .07f), strokeWidth = 2.2f)
+    drawLine(Color(0xFFE3B14B), Offset(w * .16f, bandY + h * .14f), Offset(w * .76f, bandY + h * .14f), strokeWidth = 1.8f)
+    for (k in 0..4) {
+        val dx = w * (.22f + k * .12f)
+        drawLine(Color(0xFFF3E6C8).copy(alpha = .85f), Offset(dx, bandY - h * .03f), Offset(dx, bandY + h * .16f), strokeWidth = 1.4f)
+    }
+    // ceramic glaze highlight
+    drawOval(Color.White.copy(alpha = .24f), Offset(w * .24f, h * .42f), sz(w * .12f, h * .18f))
+}
+
+fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMehanaCandle(flicker: Float) {
+    val w = size.width; val h = size.height
+    val sz = { a: Float, b: Float -> androidx.compose.ui.geometry.Size(a, b) }
+    val cx = w * .50f
+    val sway = kotlin.math.sin(flicker * 6.283f * 3f) * w * .03f
+    val pulse = .92f + .16f * kotlin.math.sin(flicker * 6.283f * 2f)
+    // warm halo on table
+    drawCircle(Brush.radialGradient(listOf(Color(0x66FFBF55), Color(0x22E87B22), Color.Transparent),
+        center = Offset(cx + sway, h * .28f), radius = w * .58f * pulse), w * .58f * pulse, Offset(cx + sway, h * .28f))
+    // brass saucer
+    drawOval(Color(0x55120804), Offset(w * .10f, h * .77f), sz(w * .80f, h * .18f))
+    drawOval(Brush.verticalGradient(listOf(Color(0xFFE8C268), Color(0xFF9C7224)), startY = h * .72f, endY = h * .92f),
+        Offset(w * .12f, h * .72f), sz(w * .76f, h * .18f))
+    // beeswax pillar
+    drawRoundRect(Brush.horizontalGradient(listOf(Color(0xFFD9BE82), Color(0xFFFFF4D6), Color(0xFFC9A660)),
+        startX = cx - w * .15f, endX = cx + w * .15f),
+        Offset(cx - w * .15f, h * .40f), sz(w * .30f, h * .40f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(3f, 3f))
+    // wick & flame
+    drawLine(Color(0xFF2B1A0E), Offset(cx, h * .40f), Offset(cx + sway * .5f, h * .34f), strokeWidth = 1.4f)
+    val flame = androidx.compose.ui.graphics.Path().apply {
+        moveTo(cx, h * .35f)
+        quadraticTo(cx - w * .12f, h * .25f, cx + sway, h * .10f)
+        quadraticTo(cx + w * .12f, h * .25f, cx, h * .35f)
+        close()
+    }
+    drawPath(flame, Brush.verticalGradient(listOf(Color(0xFFFFF8D0), Color(0xFFFFB238), Color(0xFFE05218)), startY = h * .10f, endY = h * .35f))
+}
+
+fun androidx.compose.ui.graphics.drawscope.DrawScope.drawMartenitsa() {
+    val w = size.width; val h = size.height
+    val red = Color(0xFFC62127); val white = Color(0xFFF9F3E6)
+    // twisted red-and-white cord arc
+    val cord = androidx.compose.ui.graphics.Path().apply {
+        moveTo(w * .14f, h * .60f)
+        quadraticTo(w * .50f, h * .08f, w * .84f, h * .56f)
+    }
+    drawPath(cord, white, style = androidx.compose.ui.graphics.drawscope.Stroke(4.2f, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+    for (k in 0..7) {
+        val t0 = k / 8f; val t1 = (k + .55f) / 8f
+        val x0 = w * (.14f + .70f * t0); val y0 = h * (.60f - .38f * kotlin.math.sin(t0 * 3.14159f))
+        val x1 = w * (.14f + .70f * t1); val y1 = h * (.60f - .38f * kotlin.math.sin(t1 * 3.14159f))
+        drawLine(red, Offset(x0, y0), Offset(x1, y1), strokeWidth = 3.2f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+    }
+    // left white tassel (Pizho) & right red tassel (Penda)
+    fun tassel(cx: Float, cy: Float, col: Color, tie: Color) {
+        drawCircle(Color(0x44120804), w * .09f, Offset(cx + 1.5f, cy + h * .14f))
+        val skirt = androidx.compose.ui.graphics.Path().apply {
+            moveTo(cx, cy); lineTo(cx - w * .10f, cy + h * .32f); lineTo(cx + w * .10f, cy + h * .32f); close()
+        }
+        drawPath(skirt, col)
+        drawCircle(col, w * .065f, Offset(cx, cy - h * .02f))
+        drawLine(tie, Offset(cx - w * .05f, cy + h * .05f), Offset(cx + w * .05f, cy + h * .05f), strokeWidth = 2f)
+    }
+    tassel(w * .20f, h * .58f, white, red)
+    tassel(w * .78f, h * .56f, red, white)
+}
+
+/** Warm Bulgarian mehana interior behind the table: dark timber beams and soft hearth glow. */
+fun androidx.compose.ui.graphics.drawscope.DrawScope.mehanaBackdrop() {
+    val w = size.width; val h = size.height
+    // subtle vertical oak wall planks
+    val plankW = 54.dp.toPx()
+    var x = 0f
+    while (x < w) {
+        drawLine(Color(0x28000000), Offset(x, 0f), Offset(x, h), strokeWidth = 2f)
+        drawLine(Color(0x12E8B56A), Offset(x + 2f, 0f), Offset(x + 2f, h), strokeWidth = 1f)
+        x += plankW
+    }
+    // warm overhead timber beam shadow
+    drawRect(Brush.verticalGradient(listOf(Color(0x66120703), Color.Transparent), startY = 0f, endY = h * .12f),
+        size = androidx.compose.ui.geometry.Size(w, h * .12f))
+}
+
+/** Traditional Bulgarian shevitsa (шевица) geometric diamond embroidery along the table's inner border. */
+fun androidx.compose.ui.graphics.drawscope.DrawScope.shevitsaBorder() {
+    val red = Color(0xAA9E1E24); val cream = Color(0x77F4E4C4); val green = Color(0x882E6B3E)
+    val step = 18.dp.toPx()
+    val r = 4.dp.toPx()
+    val inset = 14.dp.toPx()
+    fun diamond(cx: Float, cy: Float, c: Color) {
+        val p = androidx.compose.ui.graphics.Path().apply {
+            moveTo(cx, cy - r); lineTo(cx + r, cy); lineTo(cx, cy + r); lineTo(cx - r, cy); close()
+        }
+        drawPath(p, c)
+    }
+    // top and bottom horizontal embroidered bands (centered between corners)
+    var x = 44.dp.toPx(); var i = 0
+    while (x < size.width - 44.dp.toPx()) {
+        val c = when (i % 3) { 0 -> red; 1 -> cream; else -> green }
+        diamond(x, inset, c)
+        diamond(x, size.height - inset, c)
+        x += step; i++
+    }
+}
+

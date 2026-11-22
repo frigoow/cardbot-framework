@@ -32,6 +32,12 @@ data class AppTheme(
 )
 
 val THEMES: List<AppTheme> by lazy { listOf(
+    AppTheme("mehana", "Mehana",
+        Color(0xFF754728), Color(0xFF53301A), Color(0xFF331B0E), Color(0xFF211108),
+        Color(0xFFD9A443), Color(0xFFF4D180), Color(0xFFF8F0DF), Color(0xFFCBBBA0), Color(0xCC1E100A),
+        Color(0xFFFFFBF0), Color(0xFFF3E6CE), Color(0xFF8C1D24), Color(0xFF4A0D12), Color(0x88E6B95C), "✦",
+        glow = Color(0x4AE89A3C), nameNl = "Mehana", nameBg = "Механа",
+        style = "mehana", bgTop = Color(0xFF1A0F0A), bgBottom = Color(0xFF2E1910)),
     AppTheme("cafe", AppConfig.cafeThemeName,
         Color(0xFF8E5C3A), Color(0xFF6E4429), Color(0xFF4A2B17), Color(0xFF2A170C),
         Color(0xFFD4A24C), Color(0xFFF0CF85), Color(0xFFF6EEDD), Color(0xFFCDBFA5), Color(0xC0141C2C),
@@ -60,7 +66,7 @@ val THEMES: List<AppTheme> by lazy { listOf(
         Color(0xFFFFFCF2), Color(0xFFEFE6CF), Color(0xFF151515), Color(0xFF000000), Color(0xAAD4AF37), "◆︎", nameNl = "Art deco", nameBg = "Арт деко"),
 ) }
 
-fun themeById(id: String) = THEMES.firstOrNull { it.id == id } ?: THEMES[0]  // Café is the default
+fun themeById(id: String) = THEMES.firstOrNull { it.id == id } ?: THEMES.firstOrNull { it.id == "cafe" } ?: THEMES[0]
 
 /** The theme's name in the app language. */
 fun AppTheme.label(): String = when (Lang.code) { "nl" -> nameNl; "bg" -> nameBg; else -> name }

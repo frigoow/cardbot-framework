@@ -197,6 +197,8 @@ fun Modifier.tableBackdrop(): Modifier {
                     if (fy < .5f) drawCircle(Color.White.copy(alpha = (.10f + b * .4f) * (1 - fy * 1.6f).coerceAtLeast(0f)),
                         (.6f + b * .8f).dp.toPx(), Offset(fx * size.width, fy * size.height))
                 }
+            } else if (theme.style == "mehana") {
+                mehanaBackdrop()
             } else if (theme.stars) {
                 // a quiet night sky: small stars, a few brighter ones
                 stars.forEach { (fx, fy, b) ->
@@ -224,14 +226,17 @@ fun Modifier.tableBackdrop(): Modifier {
 @Composable
 fun FeltTable(modifier: Modifier, content: @Composable androidx.compose.foundation.layout.BoxWithConstraintsScope.() -> Unit) {
     val shape = RoundedCornerShape(48.dp)
-    val melting = LocalAppTheme.current.style == "cafe"
+    val style = LocalAppTheme.current.style
+    val melting = style == "cafe"
+    val wooded = style == "cafe" || style == "mehana"
+    val mehana = style == "mehana"
     val rim = Wood
     Box(modifier.padding(horizontal = 10.dp)
         .then(if (melting) Modifier.drawWithContent { drawContent(); meltingEdge(rim) } else Modifier)
         .shadow(20.dp, shape).clip(shape)
         .background(Brush.radialGradient(listOf(Felt2, Felt1, Felt0)))
-        .then(if (melting) Modifier.drawBehind { woodGrain() } else Modifier)
+        .then(if (wooded) Modifier.drawBehind { woodGrain(); if (mehana) shevitsaBorder() } else Modifier)
         .border(8.dp, Wood, shape).padding(8.dp)) {
-        BoxWithConstraints(Modifier.fillMaxSize().border(1.dp, Gold.copy(alpha = .28f), RoundedCornerShape(38.dp)), content = content)
+        BoxWithConstraints(Modifier.fillMaxSize().border(1.dp, Gold.copy(alpha = if (mehana) .45f else .28f), RoundedCornerShape(38.dp)), content = content)
     }
 }
