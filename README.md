@@ -1,8 +1,8 @@
-# cardtable
+# cardbot-framework
 
 The shared building blocks of our card-game apps (Android, Windows, macOS,
 Linux): what every game's app needs that is not the game. Each game keeps its
-engine, bots and app in its own repository and includes cardtable as a git
+engine, bots and app in its own repository and includes cardbot-framework as a git
 submodule:
 
 | Game | Repository | App |
@@ -23,7 +23,7 @@ No game rules live here. Next to move in from the games: the world sampler, the 
 ## Using it in a game
 
 ```bash
-git submodule add https://github.com/frigoow/cardtable.git cardtable
+git submodule add https://github.com/frigoow/cardbot-framework.git cardbot-framework
 ```
 
 In the app's Gradle build (say `app/`, beside the submodule):
@@ -31,12 +31,12 @@ In the app's Gradle build (say `app/`, beside the submodule):
 ```kotlin
 // settings.gradle.kts
 include(":platform")
-project(":platform").projectDir = file("../cardtable/platform")
+project(":platform").projectDir = file("../cardbot-framework/platform")
 
 // buildSrc/build.gradle.kts
 plugins { `kotlin-dsl` }
 repositories { mavenCentral() }
-sourceSets { main { kotlin.srcDir("../../cardtable/build-logic") } }
+sourceSets { main { kotlin.srcDir("../../cardbot-framework/build-logic") } }
 ```
 
 and declare the same plugins as `build.gradle.kts` here. The game module
@@ -47,7 +47,7 @@ actions as ints, so an online table could reuse it), a JNI bridge, the
 table's controller and screens, and an Android and a desktop shell.
 
 A change here reaches a game when its repository moves the submodule:
-`git -C cardtable pull origin main` and commit the new pointer.
+`git -C cardbot-framework pull origin main` and commit the new pointer.
 
 ## Build
 

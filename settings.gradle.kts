@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-// cardtable on its own: just the shared module, to build and check it. The
+// cardbot-framework on its own: just the shared module, to build and check it. The
 // game apps include it from their own builds (see README.md).
-rootProject.name = "cardtable"
+rootProject.name = "cardbot-framework"
 include(":platform")
