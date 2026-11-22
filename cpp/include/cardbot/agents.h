@@ -1,18 +1,25 @@
 #pragma once
-// Baseline agents for any game (docs/DESIGN.md, step 2): uniform random, and
+// Agents for any game. Baselines (docs/DESIGN.md, step 2): uniform random, and
 // ISMCTS (single-observer information-set Monte Carlo tree search, through the
 // bundled ismcsolver, MIT, Steven Franzen). ISMCTS needs only the game's
 // determinize(); the result it maximizes is the game's payoff, scaled by
 // IsmctsOptions::scale into the range its exploration constant expects.
+//
+// And a determinized play-out search (steps 3 and 8): every legal action is
+// tried in sampled worlds and played to the end by a play-out agent, random
+// at first and the distilled fast policy later (cardbot/policy.h).
 
 #include "cardbot/game.h"
 
 #include <ismcts/game.h>
 #include <ismcts/sosolver.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <random>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 namespace cardbot {
@@ -75,6 +82,63 @@ Agent<G> ismctsAgent(IsmctsOptions o = {}) {
         }
         ISMCTS::SOSolver<ActionOf<G>, ISMCTS::RootParallel> solver(o.iterations, o.threads);
         return solver(root);
+    };
+}
+
+struct RolloutOptions {
+    int worlds = 32;           // determinizations; each tries every legal action
+    unsigned threads = 1;      // worlds split over threads (same result for any count)
+};
+
+/**
+ * Flat determinized search: in each of o.worlds worlds drawn with
+ * determinize(), every legal action is applied and the game played to the end
+ * with `playout` at every seat (the same random stream for each action of a
+ * world, so the actions are compared on equal terms); the action with the best
+ * mean payoff for the seat to move is played. A single legal action is played
+ * at once. The playout agent and the world count are the knobs; a game with
+ * its own search (Belot's) builds it from cardbot/search.h instead.
+ */
+template <class G>
+Agent<G> rolloutAgent(Agent<G> playout, RolloutOptions o = {}) {
+    return [playout, o](const G& g, std::mt19937_64& rng) {
+        const auto legal = g.legalActions();
+        if (legal.size() == 1) return legal[0];
+        const int seat = g.toMove();
+        const int worlds = std::max(1, o.worlds);
+        std::vector<std::uint64_t> seeds(static_cast<std::size_t>(worlds));
+        for (auto& s : seeds) s = rng();
+        const std::vector<Agent<G>> agents(std::size_t(G::kPlayers), playout);
+        // per[w * n + k]: world w, action k
+        std::vector<double> per(static_cast<std::size_t>(worlds) * legal.size());
+        auto run = [&](int w) {
+            std::mt19937_64 wr(seeds[std::size_t(w)]);
+            const G world = g.determinize(seat, wr);
+            const std::uint64_t play_seed = wr();
+            for (std::size_t k = 0; k < legal.size(); ++k) {
+                G next = world;
+                next.apply(legal[k]);
+                std::mt19937_64 pr(play_seed);
+                per[std::size_t(w) * legal.size() + k] = playOut(std::move(next), agents, pr).payoff(seat);
+            }
+        };
+        const int threads = int(std::max(1u, std::min(o.threads, unsigned(worlds))));
+        if (threads <= 1) {
+            for (int w = 0; w < worlds; ++w) run(w);
+        } else {
+            std::vector<std::thread> pool;
+            for (int t = 0; t < threads; ++t)
+                pool.emplace_back([&, t] { for (int w = t; w < worlds; w += threads) run(w); });
+            for (auto& th : pool) th.join();
+        }
+        std::size_t best = 0;
+        double best_v = -1e300;
+        for (std::size_t k = 0; k < legal.size(); ++k) {
+            double v = 0.0;
+            for (int w = 0; w < worlds; ++w) v += per[std::size_t(w) * legal.size() + k];
+            if (v > best_v) { best_v = v; best = k; }
+        }
+        return legal[best];
     };
 }
 

@@ -92,6 +92,7 @@ struct MiniEncoder {
     static constexpr int kMaxPlies = 16;
     static constexpr int kActionDim = 16;
     static constexpr int kMaxLegal = 4;
+    static constexpr int kPolicyDim = 16;                       // the fast policy scores cards
 
     MiniTricks newGame(std::mt19937_64& rng) const { return MiniTricks::deal(rng()); }
     bool learns(const MiniTricks&) const { return true; }
@@ -111,6 +112,7 @@ struct MiniEncoder {
         return int(g.played.size());
     }
     void encodeAction(const MiniTricks&, int, int card, float* out) const { out[card] = 1.0f; }
+    int actionSlot(const MiniTricks&, int, int card) const { return card; }
     float reward(const MiniTricks& g, int team) const { return float(g.payoff(team)) / 4.0f; }
 };
 

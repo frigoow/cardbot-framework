@@ -15,6 +15,12 @@
 //       int encode(const G&, int seat, float* state, float* history) const;   // returns the history length
 //       void encodeAction(const G&, int seat, ActionOf<G>, float* out) const;
 //       float reward(const G&, int team) const;            // a finished game's return for a team
+//
+//       // optional, for the fast policy (steps 7 and 8): its output slots, and
+//       // the slot of each action (e.g. the card id). Without them a policy
+//       // scores the legal actions by position (kPolicyDim = kMaxLegal).
+//       static constexpr int kPolicyDim;
+//       int actionSlot(const G&, int seat, ActionOf<G>) const;
 //   };
 
 #include "cardbot/game.h"
@@ -24,9 +30,31 @@
 #include <random>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 namespace cardbot {
+
+namespace detail {
+template <class Enc, class = void>
+struct HasPolicySlots : std::false_type {};
+template <class Enc>
+struct HasPolicySlots<Enc, std::void_t<decltype(Enc::kPolicyDim)>> : std::true_type {};
+}  // namespace detail
+
+/** The fast policy's number of outputs for the encoder. */
+template <class Enc>
+constexpr int policyDim() {
+    if constexpr (detail::HasPolicySlots<Enc>::value) return Enc::kPolicyDim;
+    else return Enc::kMaxLegal;
+}
+
+/** The policy output slot of legal action k (a) at the seat to move. */
+template <class G, class Enc>
+int actionSlot(const Enc& enc, const G& g, int seat, const ActionOf<G>& a, int k) {
+    if constexpr (detail::HasPolicySlots<Enc>::value) return enc.actionSlot(g, seat, a);
+    else { (void)enc; (void)g; (void)seat; (void)a; return k; }
+}
 
 template <class G, class Enc>
 class BatchEnv {
@@ -85,6 +113,22 @@ public:
             for (std::size_t k = 0; k < legal.size(); ++k) enc_.encodeAction(g, seat, legal[k], la + k * Enc::kActionDim);
             n_legal[b] = int(legal.size());
             team[b] = g.team(seat);
+        });
+    }
+
+    /** Each env's legal actions' policy slots, [B, kMaxLegal], -1 past n_legal. */
+    void legalSlots(std::int32_t* slots) const {
+        for (int b = 0; b < n_; ++b)
+            if (int(legal_[std::size_t(b)].size()) > Enc::kMaxLegal)
+                throw std::length_error("cardbot::BatchEnv: more legal actions than kMaxLegal");
+        parallel([&](int b) {
+            std::int32_t* out = slots + std::size_t(b) * Enc::kMaxLegal;
+            std::fill(out, out + Enc::kMaxLegal, -1);
+            const G& g = games_[std::size_t(b)];
+            if (finished_[std::size_t(b)] || g.finished()) return;
+            const auto& legal = legal_[std::size_t(b)];
+            for (std::size_t k = 0; k < legal.size(); ++k)
+                out[k] = actionSlot(enc_, g, g.toMove(), legal[k], int(k));
         });
     }
 
