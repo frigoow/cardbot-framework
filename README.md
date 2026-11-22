@@ -15,6 +15,7 @@ submodule:
 | Path | What |
 |---|---|
 | `platform/` | A Kotlin Multiplatform + Compose module: profiles, saved games and statistics files; English plus the game's language (`tr`, and `tl` for these shared screens); the table themes; cards drawn through each game's `Deck` (its own card numbering); speech bubbles, prompts, score boxes, the profile dialog and theme picker; the felt table and its scenery; the worker thread the bots think on; file storage on the JVMs; desktop paths |
+| `cpp/` | The game-independent C++ of the bots (see [docs/DESIGN.md](docs/DESIGN.md)), so far `cardbot/nn.h`: the network building blocks (linear, LayerNorm, residual, GRU, AVX2 kernels with a portable fallback, binary layer readers), header-only so each game's forward passes compile exactly as before. A game's CMake: `add_subdirectory(cardbot-framework/cpp cardbot)` and link `cardbot` |
 | `build-logic/` | The desktop apps' native build: `CMakeJniLibrary` (a game engine's JNI library, built with CMake for the OS at hand), `findCmake`, `findJniInclude` |
 
 No game rules live here.

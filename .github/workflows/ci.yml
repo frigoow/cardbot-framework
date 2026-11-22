@@ -22,3 +22,13 @@ jobs:
           yes | "$sdk" --licenses > /dev/null || true
       - name: Build
         run: ./gradlew --no-daemon :platform:compileKotlinDesktop :platform:compileAndroidMain
+
+  cpp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build and test (portable, and AVX2)
+        run: |
+          cmake -B build -S cpp -DCMAKE_BUILD_TYPE=Release && cmake --build build -j && ctest --test-dir build --output-on-failure
+          cmake -B build-avx -S cpp -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-mavx2 -mfma" && cmake --build build-avx -j && ctest --test-dir build-avx --output-on-failure
+
