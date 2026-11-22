@@ -1,84 +1,24 @@
 name: CI
 
-# The C++ the app runs, built and tested on the desktop (no phone, no models
-# needed): the C interface end to end, the trump rule and the world sampler.
-# Then the game sessions, played through on the desktop JVM (job sessions).
+# The shared module on its own: it compiles for the desktop JVM and Android,
+# and the build logic compiles. Each game app tests it again in its own build.
 on:
   push:
     branches: [main]
   pull_request:
 
 jobs:
-  cpp:
+  platform:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Manille engine (public submodule only; engines/belote is private)
-        run: git submodule update --init engines/manille
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Android SDK licences
+        run: |
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdk" --licenses > /dev/null || true
       - name: Build
-        run: |
-          cmake -B build -S engines/manille/cpp -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
-
-  # The game sessions on the desktop JVM, with the real engine (built here
-  # through android/desktop's CMake task) and the nets from the models release:
-  # whole matches, every kind of call, a saved game carried on.
-  sessions:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Manille engine (public submodule only; engines/belote is private)
-        run: git submodule update --init engines/manille
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: Android SDK licences
-        # :shared's Android target needs the platform package even here;
-        # Gradle installs it once the licences are accepted
-        run: |
-          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          if [ -f "$sdk.bat" ]; then sdk="$sdk.bat"; fi
-          yes | "$sdk" --licenses > /dev/null || true
-      - name: Networks
-        run: MODELS_TAG=models-v1 scripts/fetch_models.sh
-      - name: Test
-        working-directory: android
-        run: ./gradlew --no-daemon -Pmanille.skipAndroidApp=true :manille:desktopTest :desktop:compileKotlin
-
-  # Bulgarian Belot: the C interface over engines/belote (private), then the
-  # Kotlin side on the desktop JVM through JNI. The private submodule is read
-  # with a read-only deploy key of frigoow/belote-bot, stored here as the
-  # secret BELOTE_BOT_DEPLOY_KEY; without it the job only warns. The networks
-  # are not needed (without them the bots bid by rule and search without nets).
-  belot:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Belot engine (private submodule)
-        id: engine
-        env:
-          KEY: ${{ secrets.BELOTE_BOT_DEPLOY_KEY }}
-        run: scripts/ci_belote_submodule.sh
-      - name: C++
-        if: steps.engine.outputs.ok == 'true'
-        run: |
-          cmake -B build-belot -S cpp/belot -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-belot -j
-          ctest --test-dir build-belot --output-on-failure
-      - uses: actions/setup-java@v5
-        if: steps.engine.outputs.ok == 'true'
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: Android SDK licences
-        if: steps.engine.outputs.ok == 'true'
-        run: |
-          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$sdk" --licenses > /dev/null || true
-      - name: Kotlin
-        if: steps.engine.outputs.ok == 'true'
-        working-directory: android
-        run: ./gradlew --no-daemon -Pmanille.skipAndroidApp=true :belot:desktopTest :belot-desktop:compileKotlin
+        run: ./gradlew --no-daemon :platform:compileKotlinDesktop :platform:compileAndroidMain

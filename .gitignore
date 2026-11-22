@@ -1,37 +1,7 @@
-# Android build output and local SDK path
-android/.gradle/
-android/app/build/
-android/app/.cxx/
-android/build/
-android/local.properties
-android/.kotlin/
-android/desktop/build/
-android/gradle/gradle-daemon-jvm.properties
+.gradle/
+.kotlin/
+build/
+local.properties
+gradle/gradle-daemon-jvm.properties
 .idea/
 *.iml
-
-# The networks: downloaded by scripts/fetch_models.sh, never committed
-android/app/src/main/assets/models/*.onnx
-android/app/src/main/assets/models/*.bin
-android/app/src/main/assets/models/*.npz
-
-# Desktop build of the C++ tests
-build/
-cpp/build/
-
-# Signing keys never belong in the repository
-*.keystore
-*.jks
-android/shared/build/
-
-# Belot: networks (scripts/belot_models.sh), build output
-android/belot-app/src/main/assets/models/*.bin
-android/belot-app/build/
-android/belot-app/.cxx/
-android/belot/build/
-android/belot-desktop/build/
-android/platform/build/
-android/manille/build/
-android/buildSrc/build/
-android/buildSrc/.gradle/
-cpp/belot/build/
