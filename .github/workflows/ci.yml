@@ -32,3 +32,20 @@ jobs:
           cmake -B build -S cpp -DCMAKE_BUILD_TYPE=Release && cmake --build build -j && ctest --test-dir build --output-on-failure
           cmake -B build-avx -S cpp -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-mavx2 -mfma" && cmake --build build-avx -j && ctest --test-dir build-avx --output-on-failure
 
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Dependencies (CPU torch)
+        run: pip install numpy pytest pybind11 torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - name: The toy game's module
+        run: |
+          cmake -B build-py -S cpp -DCMAKE_BUILD_TYPE=Release -DCARDBOT_PYTHON=ON -Dpybind11_DIR=$(python -c 'import pybind11; print(pybind11.get_cmake_dir())')
+          cmake --build build-py -j --target mini_tricks_cpp
+      - name: Tests
+        working-directory: python
+        run: PYTHONPATH=../build-py:. python -m pytest -q -s tests
+
