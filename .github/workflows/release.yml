@@ -1,0 +1,97 @@
+name: Release
+
+# Push a tag manille-vX.Y.Z (matching versionName in android/app/build.gradle.kts)
+# and this builds the signed APK and publishes it as release vX.Y.Z of
+# frigoow/manil-bot -- where the download links point -- tagged at the engine
+# commit the app was built with (engines/manille). Then the desktop packages
+# for Windows, macOS and Linux (desktop.yml) are attached to it. The networks
+# come from the models release (MODELS_TAG); they are not in git.
+#
+# Publishing to the other repository needs the secret MANIL_BOT_RELEASE_TOKEN:
+# a fine-grained token with Contents: read and write on frigoow/manil-bot.
+on:
+  push:
+    tags: ['manille-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build, e.g. manille-v1.2.4
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  MODELS_TAG: models-v2
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  RELEASE_REPO: frigoow/manil-bot
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+          submodules: true
+
+      - name: Tag matches the app version
+        run: |
+          name=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android/app/build.gradle.kts)
+          if [ "manille-v$name" != "$TAG" ]; then
+            echo "::error::tag $TAG but versionName is $name -- bump android/app/build.gradle.kts (versionName and versionCode)"
+            exit 1
+          fi
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Android SDK packages
+        run: |
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdk" --licenses > /dev/null
+          "$sdk" --install "platforms;android-37.0" "ndk;30.0.16138531" "cmake;3.22.1"
+
+      - name: Networks
+        run: MODELS_TAG=$MODELS_TAG scripts/fetch_models.sh
+
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.MANILLE_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::secret MANILLE_KEYSTORE_B64 is not set"; exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "MANILLE_KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: android
+        env:
+          MANILLE_KEYSTORE_PASSWORD: ${{ secrets.MANILLE_KEYSTORE_PASSWORD }}
+          MANILLE_KEY_ALIAS: ${{ secrets.MANILLE_KEY_ALIAS }}
+          MANILLE_KEY_PASSWORD: ${{ secrets.MANILLE_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.MANIL_BOT_RELEASE_TOKEN }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk Manille.apk
+          rel="${TAG#manille-}"
+          engine=$(git -C engines/manille rev-parse HEAD)
+          if gh release view "$rel" --repo "$RELEASE_REPO" > /dev/null 2>&1; then
+            gh release upload "$rel" Manille.apk --clobber --repo "$RELEASE_REPO"
+          else
+            gh release create "$rel" Manille.apk --repo "$RELEASE_REPO" --target "$engine" \
+              --title "Manille $rel" --generate-notes --latest
+          fi
+
+  desktop:
+    needs: apk
+    uses: ./.github/workflows/desktop.yml
+    with:
+      tag: ${{ github.event.inputs.tag || github.ref_name }}
+    secrets: inherit

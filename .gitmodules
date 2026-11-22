@@ -1,0 +1,3 @@
+[submodule "engines/manille"]
+	path = engines/manille
+	url = https://github.com/frigoow/manil-bot.git
