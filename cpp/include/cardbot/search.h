@@ -56,8 +56,9 @@ struct WorldSet {
  *   std::optional<H> drawHard(std::mt19937_64&) const;  // the last resort when draw() finds none
  *   bool weighted() const;                       // whether logWeight is used
  *   double logWeight(const H&) const;            // likelihood of the public record in that world
- *   bool hasPrior() const;                       // whether logPrior is used
- *   double logPrior(const H&) const;             // a prior on enumerated worlds (e.g. the belief net's)
+ *   bool hasPrior() const;                       // whether addLogPrior is used
+ *   void addLogPrior(const H&, double& lw) const; // a prior on enumerated worlds (e.g. the belief net's),
+ *                                                // added onto lw term by term
  */
 template <class State, class Source>
 WorldSet<State> drawWorlds(const Source& src, const WorldOptions& o, std::mt19937_64& rng) {
@@ -77,7 +78,7 @@ WorldSet<State> drawWorlds(const Source& src, const WorldOptions& o, std::mt1993
                 auto r = src.replay(h);
                 if (!r) continue;
                 double lw = weighted ? src.logWeight(h) : 0.0;
-                if (prior) lw += src.logPrior(h);
+                if (prior) src.addLogPrior(h, lw);
                 out.states.push_back(std::move(*r));
                 lws.push_back(lw);
             }
