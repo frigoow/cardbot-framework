@@ -48,7 +48,7 @@ target_include_directories(belot_core PUBLIC ${ENGINE} ${CMAKE_CURRENT_SOURCE_DI
 find_package(Threads REQUIRED)
 target_link_libraries(belot_core PUBLIC Threads::Threads)
 if(MSVC)
-    target_compile_options(belot_core PRIVATE /O2 /EHsc)
+    target_compile_options(belot_core PRIVATE /O2 /EHsc "/FI${CMAKE_CURRENT_SOURCE_DIR}/msvc_compat.h")
 else()
     target_compile_options(belot_core PRIVATE -O3)
 endif()

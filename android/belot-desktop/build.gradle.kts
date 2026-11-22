@@ -82,6 +82,9 @@ compose.desktop {
                 upgradeUuid = "b2d6e0a4-5c31-4f7e-8a92-1d4c6f0e3b57"
             }
             macOS {
+                // a macOS bundle's version must start at 1 or more (jpackage):
+                // until Belot reaches 1.0, 0.x.y is packaged there as 1.x.y
+                appVersion.split(".").let { v -> if (v[0] == "0") packageVersion = (listOf("1") + v.drop(1)).joinToString(".") }
                 iconFile.set(file("icons/belot.icns"))
                 bundleID = "com.cardtable.belot.desktop"
             }
