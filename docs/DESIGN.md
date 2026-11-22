@@ -23,6 +23,39 @@ Then evaluation at every step: duplicate deals with mirrored seats, paired
 95% intervals, matches to a target score (`cardbot.eval`), and for an app the
 C interface, the JNI bridge and the Kotlin platform (`platform/`).
 
+## Everything stays customizable
+
+Every step has a default that works for a new game, and every default can be
+replaced by the game's own code, at no cost in speed (templates and policy
+classes in C++, not virtual calls in the inner loops; plain functions and
+classes to subclass in Python). Nothing is hard-wired that a strong bot may
+need to tune:
+
+- **Rules and scoring**: anything a trick-taking game does, through the
+  `Game` interface: auctions, declarations, multipliers, held-over points,
+  match targets. The framework only calls the interface.
+- **Inference and sampling**: a game's own constraints (e.g. pinned cards, where
+  announced combinations sit), its own extra sampler state, its own world
+  weights (belief net, play likelihood, auction likelihood), or its own
+  sampler altogether.
+- **Search**: every option open (worlds, racing thresholds, exact-endgame
+  depth, Q blend and taper, overrule margin), and the play-out policy, the
+  leaf evaluation and the move ordering replaceable; the game can also skip
+  the search and use its own.
+- **Networks**: the game's own encoders and feature sizes, its own models
+  (any PyTorch module that exports to the C++ format, or a custom forward
+  pass in C++), and per-contract specialists (as Belot's suit / no-trumps /
+  all-trumps nets).
+- **Training**: rewards and their scaling (e.g. by the contract's multiplier),
+  exploration, replay, learning rates and schedules, warm starts, opponent
+  mixes, the bidder used during card-play training, hooks at every stage; the
+  trainers are building blocks to compose, not a fixed script.
+- **Evaluation and app**: the duel modes and the match rules; in the app,
+  the game's own calls, screens, words and look on the shared platform.
+
+A game adopts only the parts it wants: Manille and the two Belotes keep their
+tuned engines and take shared pieces one at a time.
+
 ## The game interface (C++)
 
 ```cpp
