@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Belot launcher icon (adaptive): the belot, king and queen of the trump suit, fanned. 108x108 canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:rotation="-12" android:pivotX="54" android:pivotY="60">
+        <path android:pathData="M37,32 h26 a4,4 0 0 1 4,4 v40 a4,4 0 0 1 -4,4 h-26 a4,4 0 0 1 -4,-4 v-40 a4,4 0 0 1 4,-4 z"
+            android:fillColor="#FFFFFBF2" android:strokeColor="#FFD8B36A" android:strokeWidth="1.2" />
+        <path android:pathData="M50,50 c-2.5,-5 -10,-5 -10,1.5 c0,5 10,10 10,13.5 c0,-3.5 10,-8.5 10,-13.5 c0,-6.5 -7.5,-6.5 -10,-1.5 z"
+            android:fillColor="#FFD0142E" />
+    </group>
+    <group android:rotation="12" android:pivotX="54" android:pivotY="60">
+        <path android:pathData="M45,30 h26 a4,4 0 0 1 4,4 v40 a4,4 0 0 1 -4,4 h-26 a4,4 0 0 1 -4,-4 v-40 a4,4 0 0 1 4,-4 z"
+            android:fillColor="#FFFFFBF2" android:strokeColor="#FFD8B36A" android:strokeWidth="1.2" />
+        <path android:pathData="M58,48 c-2.5,-5 -10,-5 -10,1.5 c0,5 10,10 10,13.5 c0,-3.5 10,-8.5 10,-13.5 c0,-6.5 -7.5,-6.5 -10,-1.5 z"
+            android:fillColor="#FFD0142E" />
+        <path android:pathData="M51,38 l3,4 l4,-5 l4,5 l3,-4 l-1.5,7 h-11 z" android:fillColor="#FFB8892E" />
+    </group>
+</vector>

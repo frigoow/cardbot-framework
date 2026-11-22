@@ -5,54 +5,70 @@ Linux), built from shared building blocks. Each game's rules engine and bots
 live in that game's own research repository and come in here as a git
 submodule, pinned to a commit whose bots have been evaluated.
 
-| Game | Engine (submodule) | App | Releases |
+| Game | Engine (submodule) | Modules | Releases |
 |---|---|---|---|
-| Manille | `engines/manille` → [manil-bot](https://github.com/frigoow/manil-bot) | `android/` | [manil-bot releases](https://github.com/frigoow/manil-bot/releases) |
-| Bulgarian Belot | `engines/belote` → belote-bot (`cpp/bg`) | to come | to come |
+| Manille | `engines/manille` → [manil-bot](https://github.com/frigoow/manil-bot) (public) | `android/manille`, `app`, `desktop` | [manil-bot releases](https://github.com/frigoow/manil-bot/releases) |
+| Bulgarian Belot | `engines/belote` → belote-bot (private), `cpp/belot` | `android/belot`, `belot-app`, `belot-desktop` | not yet |
 
-## Status
+## Layout
 
-Step 1 of the plan below is done: the Manille app of manil-bot v1.2.3
-(`7b0c72d`) moved here unchanged, with its build pointed at
-`engines/manille/cpp`. It builds the same APK and desktop packages.
+| Path | What |
+|---|---|
+| `android/platform` | Shared by every app: profiles, saved games and statistics files, English + the game's language (`tr` / `tl`), the table themes, cards drawn through each game's `Deck`, speech bubbles, prompts, the felt table and its scenery, the worker thread |
+| `android/buildSrc` | The desktop apps' native build: CMake to a JNI library for the OS at hand |
+| `android/manille` | Manille's table, bots' Kotlin side (ONNX Runtime) and screens |
+| `android/belot` | Belot's table (`BelotController`: the referee's record shown in order, the bots' turns on the worker, hints, statistics, the saved game) and screens (`BelotUi`) |
+| `cpp/belot` | `belot_api.h`: Belot's referee, bots and hints behind a plain C interface (per-seat views as JSON, actions as ints), its JNI bridge and tests |
+| `scripts/` | `fetch_models.sh` (Manille's nets, from the models release), `belot_models.sh` (Belot's nets, from a belote-bot checkout) |
 
-## Plan
+A new game brings its engine as a submodule, a C interface like
+`cpp/belot/belot_api.h`, a game module like `android/belot` that draws its
+own calls and score on the platform's widgets, and two thin shells. The same
+per-seat views and integer actions are what an online table would send, so
+multiplayer can be added later without changing the engines.
 
-1. **Move Manille's app here unchanged** (done). It keeps its `applicationId` and
-   signing key, so new versions still install over the old one.
-2. **Split shared from game-specific.** `kotlin/platform` holds the table widgets,
-   cards, themes, i18n, profiles, statistics, saves, settings and native
-   loading. `kotlin/games/<game>` holds the bidding panel, contract and score
-   display, the game's words and its model files. There is one app module per
-   game.
-3. **One C interface per game engine** (`cg_new`, `cg_view(seat)` as JSON,
-   `cg_legal`, `cg_apply`, `cg_bot`, `cg_hint`, `cg_save`/`cg_load`). Actions are
-   ints with a game-specific meaning, and a view never holds another seat's
-   cards. With one interface, a single JNI bridge and a generic session serve
-   every game. Online play can later reuse the same per-seat views, but
-   multiplayer is not planned yet.
-4. **Bulgarian Belot:** `cpp/bg/capi.cpp` in belote-bot, the `games/belot`
-   UI, and a separate app. The bots' networks there run in plain C++, so it
-   needs no ONNX Runtime.
+## Bulgarian Belot
+
+The bots are the strongest measured configuration of belote-bot: the
+unmasked neural bidder (with doubles), card play by world sampling with the
+belief, fast-policy and Q-GRU nets of the three contract kinds, racing, and
+an exact endgame. On 2000 games inside Kostov's BelotGameEngine it won
+54.35% ± 1.74 pp against his Master bot. In the app this is "Strong" (192
+worlds, about 120 ms a card on a desktop CPU without AVX2); "Normal" searches
+64 worlds and "Easy" plays the rule policy. The app starts in Bulgarian on a
+Bulgarian device and in English elsewhere; both can be switched in the lobby
+or the menu. It uses the same table themes as Manille, its café table first.
 
 ## Build
 
 ```bash
-git clone --recurse-submodules <this repo>
-scripts/fetch_models.sh                 # Manille's networks (not in git)
+git clone --recurse-submodules <this repo>      # engines/belote needs access to belote-bot
+scripts/fetch_models.sh                         # Manille's networks (not in git)
+scripts/belot_models.sh ../Belote               # Belot's networks, from a belote-bot checkout
 cd android
-./build.sh assembleDebug                # APK
-./gradlew :desktop:run                  # desktop
+./build.sh assembleDebug                        # both APKs
+./gradlew :desktop:run                          # Manille on the desktop
+./gradlew :belot-desktop:run                    # Belot on the desktop
+./gradlew -Pmanille.skipAndroidApp=true :manille:desktopTest :belot:desktopTest
+cmake -B build -S ../cpp/belot && cmake --build build -j && ctest --test-dir build
 ```
 
-See [android/README.md](android/README.md) for the toolchain (SDK, NDK, JDK).
+The desktop modules can also render the real app offscreen into PNGs:
+`./gradlew :belot-desktop:test -Pbelot.screenshots=/some/dir` (and
+`:desktop:test -Pmanille.screenshots=...`). See
+[android/README.md](android/README.md) for the toolchain (SDK, NDK, JDK).
 
 ## Releases
 
 For now Manille is still released from manil-bot itself, which holds the
-signing key. The workflow here is ready for when that moves: push the tag `manille-vX.Y.Z`. CI builds the signed APK and the three desktop
-packages and publishes them as release `vX.Y.Z` of manil-bot, at the engine
-commit they were built from, so the existing download links keep working.
-This needs the secret `MANIL_BOT_RELEASE_TOKEN`, a fine-grained token with
-write access to manil-bot's contents. It also needs the existing `MANILLE_KEYSTORE_*`
-secrets, copied to this repository.
+signing key. The workflow here is ready for when that moves: push the tag
+`manille-vX.Y.Z`. CI builds the signed APK and the three desktop packages and
+publishes them as release `vX.Y.Z` of manil-bot, at the engine commit they
+were built from, so the existing download links keep working. This needs
+the secret `MANIL_BOT_RELEASE_TOKEN`, a fine-grained token with write access
+to manil-bot's contents, and the existing `MANILLE_KEYSTORE_*` secrets copied
+to this repository.
+
+Belot has no release yet: it needs its own signing key (`BELOT_KEYSTORE_*`),
+a home for its networks (about 40 MB) and a release workflow. CI's `belot`
+job needs the secret `BELOTE_BOT_TOKEN` (read access to belote-bot).

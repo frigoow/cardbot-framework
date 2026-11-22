@@ -1,8 +1,13 @@
 # Manille apps: Android and desktop
 
+This directory builds every app (see the repository README for the layout:
+`platform/` is shared, `manille/` + `app/` + `desktop/` are Manille,
+`belot/` + `belot-app/` + `belot-desktop/` are Bulgarian Belot). What
+follows describes the Manille app.
+
 Kotlin and Compose Multiplatform render the game; a JNI adapter
-(`cpp/jni/jni_bridge.cpp`) calls the C++ engine and the rule agent through
-the plain C interface in `cpp/mobile/manille_mobile.h`; ONNX Runtime runs
+(`engines/manille/cpp/jni/jni_bridge.cpp`) calls the C++ engine and the rule agent through
+the plain C interface in `engines/manille/cpp/mobile/manille_mobile.h`; ONNX Runtime runs
 the networks. The same game and screens run on Android (`app/`) and on
 Windows, macOS (Apple Silicon) and Linux (`desktop/`). No server.
 
@@ -33,7 +38,7 @@ compiler (GCC or Clang; MSVC on Windows):
 ```
 
 The desktop build compiles the engine's JNI library with CMake
-(`cpp/CMakeLists.txt`, `MANILLE_JNI=ON`) for the OS it runs on; packaging
+(`engines/manille/cpp/CMakeLists.txt`, `MANILLE_JNI=ON`) for the OS it runs on; packaging
 needs a full JDK with `jpackage`. Without the NDK installed, add
 `-Pmanille.skipAndroidApp=true` (leaves `:app` out). Each package can only be made on its own
 OS: `.github/workflows/desktop.yml` builds all three. Profiles and saved
@@ -49,22 +54,22 @@ in git.
 
 | Piece | Where |
 |---|---|
-| Rules, legality, scoring | `cpp/manille_game.cpp` -- the only rules implementation; the UI asks it |
-| Bot card play | `cpp/rule_agent.cpp` + `cpp/rule_playout.cpp` (+ `cpp/fast_policy.cpp`), called by `shared/.../RuleBot.kt` |
-| World sampling | `cpp/sampler/` via `manille_mobile_sample_worlds` |
+| Rules, legality, scoring | `engines/manille/cpp/manille_game.cpp` -- the only rules implementation; the UI asks it |
+| Bot card play | `engines/manille/cpp/rule_agent.cpp` + `engines/manille/cpp/rule_playout.cpp` (+ `engines/manille/cpp/fast_policy.cpp`), called by `manille/.../RuleBot.kt` |
+| World sampling | `engines/manille/cpp/sampler/` via `manille_mobile_sample_worlds` |
 | Belief / Q / decision networks | ONNX Runtime: `app/.../BeliefNet.kt`, `QNet.kt`, `DeclarationNet.kt`, `AnnounceNet.kt` |
-| The table: deals, calls, bots' turns, score | `shared/.../LocalSession.kt` behind `TableSession` (`Table.kt`) |
-| Table on screen, hints, stats, profiles | `shared/.../ManilleUi.kt`, `GameController.kt`, `Persistence.kt` |
-| JNI, the nets on ONNX Runtime, files (Android + desktop) | `shared/src/jvmShared/` (`com.manille.jvm`) |
+| The table: deals, calls, bots' turns, score | `manille/.../LocalSession.kt` behind `TableSession` (`Table.kt`) |
+| Table on screen, hints, stats, profiles | `manille/.../ManilleUi.kt`, `GameController.kt`, `Persistence.kt` |
+| JNI, the nets on ONNX Runtime, files (Android + desktop) | `manille/src/jvmShared/` (`com.manille.jvm`) |
 
 The code is split in two Gradle modules:
 
-- `shared/` (Kotlin Multiplatform + Compose Multiplatform): the game session,
+- `manille/` (Kotlin Multiplatform + Compose Multiplatform): the game session,
   the bots' Kotlin side, storage and every screen. It has no Android or JVM
-  calls: `shared/.../Platform.kt` lists what it needs from the platform
+  calls: `manille/.../Platform.kt` lists what it needs from the platform
   (the C++ engine, the nets, files), and it also compiles for iOS
-  (`./gradlew :shared:compileKotlinIosArm64` works on Linux too).
-- `shared/src/jvmShared`: what Android and the desktop share as JVMs -- JNI
+  (`./gradlew :manille:compileKotlinIosArm64` works on Linux too).
+- `manille/src/jvmShared`: what Android and the desktop share as JVMs -- JNI
   to the C++ engine, the nets on ONNX Runtime, file storage (`JvmPlatform`);
   compiled into both targets against each one's ONNX Runtime.
 - `app/`: the Android shell -- `MainActivity`, `AndroidPlatform` (where the
@@ -79,8 +84,8 @@ and keeps the score, and reports what happens as events with a `TableView`
 the screen: messages, the held trick, the bots' reactions, statistics and the
 saved game. A networked table will be another `TableSession`.
 
-`./gradlew :shared:testAndroidHostTest` runs the shared tests (among them:
-files written by earlier versions still load); `./gradlew :shared:desktopTest`
+`./gradlew :manille:testAndroidHostTest` runs the shared tests (among them:
+files written by earlier versions still load); `./gradlew :manille:desktopTest`
 runs them on the desktop JVM too, plus whole games through `LocalSession` with
 the real engine and nets.
 

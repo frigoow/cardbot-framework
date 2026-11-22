@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with:
-          submodules: true
+      - name: Manille engine (public submodule only; engines/belote is private)
+        run: git submodule update --init engines/manille
       - name: Build
         run: |
           cmake -B build -S engines/manille/cpp -DCMAKE_BUILD_TYPE=Release
@@ -29,8 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with:
-          submodules: true
+      - name: Manille engine (public submodule only; engines/belote is private)
+        run: git submodule update --init engines/manille
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -46,4 +46,37 @@ jobs:
         run: MODELS_TAG=models-v1 scripts/fetch_models.sh
       - name: Test
         working-directory: android
-        run: ./gradlew --no-daemon -Pmanille.skipAndroidApp=true :shared:desktopTest :desktop:compileKotlin
+        run: ./gradlew --no-daemon -Pmanille.skipAndroidApp=true :manille:desktopTest :desktop:compileKotlin
+
+  # Bulgarian Belot: the C interface over engines/belote (private), then the
+  # Kotlin side on the desktop JVM through JNI. The private submodule needs a
+  # token that can read frigoow/belote-bot (secret BELOTE_BOT_TOKEN); the
+  # networks are not needed (without them the bots bid by rule and search
+  # without nets, as the tests allow).
+  belot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Belot engine (private submodule)
+        env:
+          TOKEN: ${{ secrets.BELOTE_BOT_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then echo "::error::secret BELOTE_BOT_TOKEN is not set"; exit 1; fi
+          git -c "url.https://x-access-token:${TOKEN}@github.com/.insteadOf=https://github.com/" submodule update --init engines/belote
+      - name: C++
+        run: |
+          cmake -B build-belot -S cpp/belot -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-belot -j
+          ctest --test-dir build-belot --output-on-failure
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Android SDK licences
+        run: |
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdk" --licenses > /dev/null || true
+      - name: Kotlin
+        working-directory: android
+        run: ./gradlew --no-daemon -Pmanille.skipAndroidApp=true :belot:desktopTest :belot-desktop:compileKotlin
+

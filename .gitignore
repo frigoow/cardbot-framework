@@ -23,3 +23,15 @@ cpp/build/
 *.keystore
 *.jks
 android/shared/build/
+
+# Belot: networks (scripts/belot_models.sh), build output
+android/belot-app/src/main/assets/models/*.bin
+android/belot-app/build/
+android/belot-app/.cxx/
+android/belot/build/
+android/belot-desktop/build/
+android/platform/build/
+android/manille/build/
+android/buildSrc/build/
+android/buildSrc/.gradle/
+cpp/belot/build/

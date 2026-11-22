@@ -53,7 +53,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.tag || github.ref }}
-          submodules: true
+      - name: Manille engine (public submodule only; engines/belote is private)
+        run: git submodule update --init engines/manille
 
       - uses: actions/setup-java@v5
         with:
