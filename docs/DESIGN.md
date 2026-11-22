@@ -96,12 +96,29 @@ struct MyEncoder {
     float reward(const MyGame&, int team) const;
 };
 
+// with an auction (steps 5 and 6), cardbot/bidding.h:
+struct MyBidEncoder {
+    static constexpr int kFeatDim, kHistDim, kMaxHist, kNumBids;
+    MyGame newGame(std::mt19937_64&) const;
+    bool isBid(const MyGame&) const;                                  // a decision of the auction
+    int bidSlot(const MyGame&, int seat, MyGame::Action) const;
+    int encode(const MyGame&, int seat, float* feat, float* hist) const;
+    float reward(const MyGame&, int team) const;
+    MyGame::Action baselineBid(const MyGame&, std::mt19937_64&) const; // step 2
+};
+
 PYBIND11_MODULE(mygame_cpp, m) {      // cardbot/python.h
-    cardbot::bindBatchEnv<MyGame, MyEncoder>(m, "BatchEnv");
+    cardbot::bindBatchEnv<MyGame, MyEncoder, MyBidEncoder>(m, "BatchEnv");
+    cardbot::bindBidEnv<MyGame, MyBidEncoder, MyEncoder>(m, "BidEnv");
     cardbot::bindQGru(m);
     cardbot::bindFastPolicy(m);
+    cardbot::bindBidModel(m);
 }
 ```
+
+The bid environment's table (which bidder each seat uses on each deal), its
+extra bidders and its play agent are set in C++, so a game can train against
+mixed partners or fixed opponents as Belot does.
 
 A game with its own search builds it from `cardbot/search.h` (world draws
 with the game's weights, candidate racing, the Q blend) as Belot does.
@@ -110,13 +127,24 @@ with the game's weights, candidate racing, the Q blend) as Belot does.
 
 ```python
 import mygame_cpp
-from cardbot.models import QGRU, FastPolicy
-from cardbot.train import dmc, distill
+from cardbot.models import QGRU, FastPolicy, BidNet
+from cardbot.train import dmc, distill, bidding
 
-env = mygame_cpp.BatchEnv(2048, seed=1, threads=4)
+env = mygame_cpp.BatchEnv(2048, seed=1, threads=4)    # auctions by the baseline bidder
 q = QGRU(env.STATE_DIM, env.PLY_DIM, env.ACTION_DIM)
 dmc.train(env, q, dmc.DMCConfig(rounds=2000))                       # step 4
-q.export_bin("q.bin", tag=b"MYQ1")
+fast = FastPolicy(env.STATE_DIM, env.POLICY_DIM)
+distill.train(env, q, fast, distill.DistillConfig(rounds=50))      # a first fast net
+fast.export_bin("fast.bin", tag=b"MYP1")
+
+benv = mygame_cpp.BidEnv(threads=4)
+benv.use_play_policy("fast.bin", "MYP1")                          # cards by the fast net
+bid = BidNet(benv.FEAT_DIM, benv.HIST_DIM, benv.NUM_BIDS)
+bid = bidding.train(benv, bid, bidding.BidConfig(iters=200, out="bid.bin", tag=b"MYB1"))  # step 5
+print(bidding.evaluate(benv))                                       # against the baseline bidder
+
+env.use_bid_model("bid.bin", "MYB1")                               # step 6: refit
+dmc.train(env, q, dmc.DMCConfig(rounds=500, lr=1e-4))
 fast = FastPolicy(env.STATE_DIM, env.POLICY_DIM)
 distill.train(env, q, fast, distill.DistillConfig(rounds=50))      # step 7
 fast.export_bin("fast.bin", tag=b"MYP1")
@@ -140,9 +168,11 @@ fixed-seed run in Python).
    search building blocks (`cardbot/search.h`, bit-identical on Belot's
    search) and duels (done; Belot plays through it). Still to come: the exact
    endgame.
-4. The Python package: environment template, Q-GRU, DMC (done), fast policy
-   and its distillation with the C++ policy agent (done), bidding and refit
-   (next); Belot's trainers become thin adapters.
+4. The Python package: environment template, Q-GRU, DMC, fast policy and its
+   distillation with the C++ policy agent, counterfactual bidding
+   (`cardbot/bidding.h`, `train/bidding.py`) and the refit with the learned
+   bidder (done, tested on toy games with and without an auction). Belot's
+   trainers become thin adapters between its training runs.
 5. A small example game (Whist-like) written from scratch against the
    interface, to prove the pipeline end to end for a game the framework has
    never seen, and the "new game" guide.

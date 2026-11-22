@@ -3,6 +3,7 @@
 #include "cardbot/policy.h"
 #include "cardbot/python.h"
 #include "../mini_tricks.h"
+#include "../mini_trump.h"
 
 #include <memory>
 #include <string>
@@ -46,6 +47,11 @@ PYBIND11_MODULE(mini_tricks_cpp, m) {
     cardbot::bindBatchEnv<G, Enc>(m, "BatchEnv");
     cardbot::bindQGru(m);
     cardbot::bindFastPolicy(m);
+    cardbot::bindBidModel(m);
+    // the toy game with an auction (steps 5 and 6)
+    using T = cardbot_test::MiniTrump;
+    cardbot::bindBatchEnv<T, cardbot_test::MiniTrumpEncoder, cardbot_test::MiniTrumpBidEncoder>(m, "TrumpEnv");
+    cardbot::bindBidEnv<T, cardbot_test::MiniTrumpBidEncoder, cardbot_test::MiniTrumpEncoder>(m, "TrumpBidEnv");
     // a duplicate-deal duel between two agents given by spec: (mean, ci95) in tricks per deal for A
     m.def("duel", [](const std::string& a, const std::string& b, int pairs, std::uint64_t seed, int threads) {
         const auto agent_a = makeAgent(a), agent_b = makeAgent(b);
