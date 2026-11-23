@@ -18,7 +18,7 @@ def teacher():
     env = mt.BatchEnv(1024, 3, 4)
     model = QGRU(env.STATE_DIM, env.PLY_DIM, env.ACTION_DIM, state_hidden=64, gru_hidden=32, act_hidden=32,
                  adv_hidden=64)
-    dmc.train(env, model, dmc.DMCConfig(rounds=40, num_envs=1024, batch_size=1024, epochs=2, lr=1e-3, log=None))
+    dmc.train(env, model, dmc.DMCConfig(episodes=40 * 1024, batch_size=1024, lr=1e-3, eps_start=0.1, log=None))
     return model.eval()
 
 
@@ -57,13 +57,13 @@ def test_distilled_policy_follows_teacher_and_helps_search(teacher, tmp_path):
     torch.manual_seed(2)
     student = FastPolicy(env.STATE_DIM, env.POLICY_DIM, h1=128, h2=64)
     logs = []
-    distill.train(env, teacher, student, distill.DistillConfig(rounds=4, epochs=10, temperature=0.05, log=logs.append))
+    distill.train(env, teacher, student, distill.DistillConfig(rounds=4, epochs=10, batch_size=1024, temperature=0.05, log=logs.append))
     agreement = float(logs[-1].split("agreement ")[1].rstrip("%"))
     t_mean, t_half = dmc.evaluate(env, teacher)
     s_mean, s_half = distill.evaluate(env, student)
     print(f"\n{logs[-1]}\nvs random (tricks/4): teacher {t_mean:+.3f} +- {t_half:.3f}, "
           f"fast policy {s_mean:+.3f} +- {s_half:.3f}")
-    assert agreement > 85
+    assert agreement > 75  # over decisions with a choice only (forced moves are left out, min_legal=2)
     assert s_mean - s_half > 0.15
 
     # step 8: the same net in C++, alone and as the rollout search's play-out policy

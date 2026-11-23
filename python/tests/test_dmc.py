@@ -63,7 +63,7 @@ def test_dmc_learns_to_beat_random():
     env = mt.BatchEnv(1024, 3, 4)
     model = small_model(env)
     before, _ = dmc.evaluate(env, model.to(dmc.DMCConfig().device))
-    cfg = dmc.DMCConfig(rounds=40, num_envs=1024, batch_size=1024, epochs=2, lr=1e-3, log=None)
+    cfg = dmc.DMCConfig(episodes=40 * 1024, batch_size=1024, lr=1e-3, eps_start=0.1, log=None)
     dmc.train(env, model, cfg)
     after, half = dmc.evaluate(env, model)
     print(f"greedy Q vs random: {before:+.3f} before training, {after:+.3f} +- {half:.3f} after (return = tricks/4)")

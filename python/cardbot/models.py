@@ -2,11 +2,12 @@
 
 QGRU is the action-as-input Q network of the Manille and Belote bots: a state
 MLP and a GRU over the play history feed a residual trunk, and a dueling head
-scores every legal action from its features. FastPolicy is the small MLP
+scores every legal action from its features. BeliefNet corrects the world
+sampler's card marginals. FastPolicy is the small MLP
 distilled from it for the search's play-outs: state in, one logit per action
 slot out. BidNet values each bid of an auction for the bidder's team (steps 5
 and 6). Their export_bin() writes the layouts cardbot/models.h reads
-(Bulgarian Belot's BGQ1 and BGP1, and CBB1 for the bid net, with a 4-byte tag of the game's choosing).
+(Bulgarian Belot's BGQ1, BGB1 and BGP1, and CBB1 for the bid net, with a 4-byte tag of the game's choosing).
 Sizes are the game's; layers are customizable by subclassing.
 """
 
@@ -94,18 +95,34 @@ class DuelingQHead(nn.Module):
         self.adv_fc2 = nn.Linear(adv_hidden, 1)
 
     def forward(self, trunk: torch.Tensor, actions: torch.Tensor, valid_mask: torch.Tensor | None = None) -> torch.Tensor:
+        """Q for each of the K action rows; with valid_mask, only the first k_active rows any
+        sample uses are computed (the rest are 0), and the advantages are centred over the
+        valid ones."""
         v = self.v_fc2(F.silu(self.v_ln1(self.v_fc1(trunk))))
-        b, k, _ = actions.shape
-        ae = F.silu(self.act_ln(self.act_fc(actions)))
-        te = trunk.unsqueeze(1).expand(b, k, -1)
-        h = F.silu(self.adv_ln1(self.adv_fc1(torch.cat([te, ae], dim=-1))))
-        adv = self.adv_fc2(self.adv_res(h)).squeeze(-1)
-        if valid_mask is not None:
-            vm = valid_mask.to(adv.dtype)
-            mean_adv = (adv * vm).sum(-1, keepdim=True) / vm.sum(-1, keepdim=True).clamp(min=1.0)
+        b, k_full, _ = actions.shape
+        if valid_mask is not None and valid_mask.any():
+            k_active = int(valid_mask.any(dim=0).nonzero(as_tuple=False).max().item()) + 1
+            act_in = actions[:, :k_active, :]
+            vm = valid_mask[:, :k_active].to(v.dtype)
         else:
-            mean_adv = adv.mean(-1, keepdim=True)
-        return v + (adv - mean_adv)
+            k_active = k_full
+            act_in = actions
+            vm = None
+        ae = F.silu(self.act_ln(self.act_fc(act_in)))
+        te = trunk.unsqueeze(1).expand(b, k_active, -1)
+        h = F.silu(self.adv_ln1(self.adv_fc1(torch.cat([te, ae], dim=-1))))
+        h = self.adv_res(h)
+        adv = self.adv_fc2(h).squeeze(-1)
+        if vm is not None:
+            mean_adv = (adv * vm).sum(dim=-1, keepdim=True) / vm.sum(dim=-1, keepdim=True).clamp(min=1.0)
+        else:
+            mean_adv = adv.mean(dim=-1, keepdim=True)
+        q_active = v + (adv - mean_adv)
+        if k_active == k_full:
+            return q_active
+        q_out = torch.zeros((b, k_full), dtype=q_active.dtype, device=q_active.device)
+        q_out[:, :k_active] = q_active
+        return q_out
 
     def export_weights(self, f) -> None:
         write_linear(f, self.v_fc1)
@@ -141,6 +158,8 @@ class QGRU(nn.Module):
         return self.trunk2(self.trunk1(torch.cat([se, he], dim=-1)))
 
     def forward(self, state, actions, history, n_plies, valid_mask=None) -> torch.Tensor:
+        # A subclass can add training-only heads on the trunk (e.g. Belot's card ownership),
+        # which export_bin() leaves out.
         return self.q_head(self.trunk(state, history, n_plies), actions, valid_mask)
 
     def export_bin(self, path: str | Path, tag: bytes = b"BGQ1", version: int = 1) -> None:
@@ -159,6 +178,56 @@ class QGRU(nn.Module):
             self.trunk1.export_weights(f)
             self.trunk2.export_weights(f)
             self.q_head.export_weights(f)
+
+
+class BeliefNet(nn.Module):
+    """Where each hidden card is (one of n_seats owners), as a correction to the exact
+    marginals of the world sampler (cardbot/sampler.h's marginals()): logits =
+    log(marginals) + delta(state, history, marginals), the delta head starting at zero so
+    the untrained net is the sampler. Cards the sampler rules out stay impossible."""
+
+    def __init__(self, state_dim: int, ply_dim: int, n_cards: int = 32, n_seats: int = 3,
+                 state_hidden: int = 256, gru_hidden: int = 128):
+        super().__init__()
+        self.state_dim, self.ply_dim = state_dim, ply_dim
+        self.n_cards, self.n_seats = n_cards, n_seats
+        self.state_hidden, self.gru_hidden = state_hidden, gru_hidden
+        trunk_dim = state_hidden + gru_hidden
+        self.state_fc = nn.Linear(state_dim + n_cards * n_seats, state_hidden)
+        self.state_ln = nn.LayerNorm(state_hidden)
+        self.hist_enc = HistoryEncoder(ply_dim, gru_hidden)
+        self.trunk1 = ResBlock(trunk_dim)
+        self.trunk2 = ResBlock(trunk_dim)
+        self.delta_head = nn.Linear(trunk_dim, n_cards * n_seats)
+        nn.init.zeros_(self.delta_head.weight)
+        nn.init.zeros_(self.delta_head.bias)
+
+    def forward(self, state, history, n_plies, sampler_marginals) -> torch.Tensor:
+        """sampler_marginals: [B, n_cards, n_seats]; returns logits of the same shape."""
+        m_flat = sampler_marginals.reshape(state.shape[0], self.n_cards * self.n_seats).to(state.dtype)
+        se = F.silu(self.state_ln(self.state_fc(torch.cat([state, m_flat], dim=-1))))
+        he = self.hist_enc(history, n_plies)
+        h = self.trunk2(self.trunk1(torch.cat([se, he], dim=-1)))
+        delta = self.delta_head(h).view(-1, self.n_cards, self.n_seats).float()
+        base = torch.log(sampler_marginals.float().clamp(min=1e-6))
+        return (base + delta).masked_fill(sampler_marginals <= 0.0, -1e9)
+
+    def export_bin(self, path: str | Path, tag: bytes = b"BGB1", version: int = 1) -> None:
+        """Tag, 5 int32 sizes (version, state, ply, state hidden, GRU hidden), then the layers
+        (Bulgarian Belot's BGB1 layout; the reader knows the cards and seats)."""
+        if len(tag) != 4:
+            raise ValueError("tag must be 4 bytes")
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as f:
+            f.write(tag)
+            f.write(struct.pack("<5i", version, self.state_dim, self.ply_dim, self.state_hidden, self.gru_hidden))
+            write_linear(f, self.state_fc)
+            write_ln(f, self.state_ln)
+            self.hist_enc.export_weights(f)
+            self.trunk1.export_weights(f)
+            self.trunk2.export_weights(f)
+            write_linear(f, self.delta_head)
 
 
 class FastPolicy(nn.Module):

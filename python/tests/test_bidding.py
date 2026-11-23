@@ -64,7 +64,7 @@ def test_refit_env_bids_with_the_bid_net(tmp_path):
     assert (env.observe()["state"][:, trump].argmax(1) == 0).all()
     # the refit itself: DMC on those auctions runs as usual
     q = QGRU(env.STATE_DIM, env.PLY_DIM, env.ACTION_DIM, state_hidden=32, gru_hidden=16, act_hidden=16, adv_hidden=32)
-    dmc.train(env, q, dmc.DMCConfig(rounds=2, num_envs=256, batch_size=256, epochs=1, log=None))
+    dmc.train(env, q, dmc.DMCConfig(episodes=2 * 256, batch_size=256, mb_per_round=4, log=None))
     env.use_auto_action()
     env.reset_all(4)
     np.testing.assert_array_equal(env.observe()["state"][:, trump].argmax(1), baseline_trumps)
