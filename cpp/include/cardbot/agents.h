@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <random>
 #include <stdexcept>
@@ -96,12 +97,33 @@ struct RolloutOptions {
  * with `playout` at every seat (the same random stream for each action of a
  * world, so the actions are compared on equal terms); the action with the best
  * mean payoff for the seat to move is played. A single legal action is played
- * at once. The playout agent and the world count are the knobs; a game with
+ * at once. With a leaf, a play-out stops where the leaf values it (e.g. the
+ * exact endgame of the last tricks). The playout agent, the leaf and the world
+ * count are the knobs; a game with
  * its own search (Belot's) builds it from cardbot/search.h instead.
  */
+/**
+ * A play-out leaf: true and the value for `seat` in v when it can value the
+ * position without playing on (an exact endgame, cardbot/endgame.h; a value
+ * net), false to go on playing.
+ */
 template <class G>
-Agent<G> rolloutAgent(Agent<G> playout, RolloutOptions o = {}) {
-    return [playout, o](const G& g, std::mt19937_64& rng) {
+using Leaf = std::function<bool(const G&, int seat, double& v)>;
+
+/** g played on by `agents` until the end or until `leaf` values it; the value for `seat`. */
+template <class G>
+double playOutValue(G g, int seat, const std::vector<Agent<G>>& agents, const Leaf<G>& leaf, std::mt19937_64& rng) {
+    double v = 0;
+    while (!g.finished()) {
+        if (leaf && leaf(g, seat, v)) return v;
+        g.apply(agents[std::size_t(g.toMove())](g, rng));
+    }
+    return g.payoff(seat);
+}
+
+template <class G>
+Agent<G> rolloutAgent(Agent<G> playout, RolloutOptions o = {}, Leaf<G> leaf = {}) {
+    return [playout, o, leaf](const G& g, std::mt19937_64& rng) {
         const auto legal = g.legalActions();
         if (legal.size() == 1) return legal[0];
         const int seat = g.toMove();
@@ -119,7 +141,7 @@ Agent<G> rolloutAgent(Agent<G> playout, RolloutOptions o = {}) {
                 G next = world;
                 next.apply(legal[k]);
                 std::mt19937_64 pr(play_seed);
-                per[std::size_t(w) * legal.size() + k] = playOut(std::move(next), agents, pr).payoff(seat);
+                per[std::size_t(w) * legal.size() + k] = playOutValue(std::move(next), seat, agents, leaf, pr);
             }
         };
         const int threads = int(std::max(1u, std::min(o.threads, unsigned(worlds))));
