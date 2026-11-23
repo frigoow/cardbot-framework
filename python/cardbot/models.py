@@ -4,8 +4,9 @@ QGRU is the action-as-input Q network of the Manille and Belote bots: a state
 MLP and a GRU over the play history feed a residual trunk, and a dueling head
 scores every legal action from its features. FastPolicy is the small MLP
 distilled from it for the search's play-outs: state in, one logit per action
-slot out. Their export_bin() writes the layouts cardbot/models.h reads
-(Bulgarian Belot's BGQ1 and BGP1, with a 4-byte tag of the game's choosing).
+slot out. BidNet values each bid of an auction for the bidder's team (steps 5
+and 6). Their export_bin() writes the layouts cardbot/models.h reads
+(Bulgarian Belot's BGQ1 and BGP1, and CBB1 for the bid net, with a 4-byte tag of the game's choosing).
 Sizes are the game's; layers are customizable by subclassing.
 """
 
@@ -184,3 +185,41 @@ class FastPolicy(nn.Module):
             f.write(struct.pack("<5i", version, self.state_dim, self.h1, self.h2, self.out_dim))
             for layer in (self.fc1, self.fc2, self.fc3):
                 write_linear(f, layer)
+
+
+class BidNet(nn.Module):
+    """values over the bid slots = head(trunk2(trunk1([silu(ln(fc(features))), GRU(auction)])))."""
+
+    def __init__(self, feat_dim: int, hist_dim: int, num_bids: int, hidden: int = 128, gru_hidden: int = 48):
+        super().__init__()
+        self.feat_dim, self.hist_dim, self.num_bids = feat_dim, hist_dim, num_bids
+        self.hidden, self.gru_hidden = hidden, gru_hidden
+        trunk_dim = hidden + gru_hidden
+        self.feat_fc = nn.Linear(feat_dim, hidden)
+        self.feat_ln = nn.LayerNorm(hidden)
+        self.hist_enc = HistoryEncoder(hist_dim, gru_hidden)
+        self.trunk1 = ResBlock(trunk_dim)
+        self.trunk2 = ResBlock(trunk_dim)
+        self.head = nn.Linear(trunk_dim, num_bids)
+
+    def forward(self, feat: torch.Tensor, hist: torch.Tensor, n_hist: torch.Tensor) -> torch.Tensor:
+        f = F.silu(self.feat_ln(self.feat_fc(feat)))
+        h = self.hist_enc(hist, n_hist)
+        return self.head(self.trunk2(self.trunk1(torch.cat([f, h], dim=-1))))
+
+    def export_bin(self, path: str | Path, tag: bytes = b"CBB1", version: int = 1) -> None:
+        """The layout cardbot::BidModel::load reads: tag, 6 int32 sizes, then the layers."""
+        if len(tag) != 4:
+            raise ValueError("tag must be 4 bytes")
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as f:
+            f.write(tag)
+            f.write(struct.pack("<6i", version, self.feat_dim, self.hist_dim, self.num_bids, self.hidden,
+                                self.gru_hidden))
+            write_linear(f, self.feat_fc)
+            write_ln(f, self.feat_ln)
+            self.hist_enc.export_weights(f)
+            self.trunk1.export_weights(f)
+            self.trunk2.export_weights(f)
+            write_linear(f, self.head)

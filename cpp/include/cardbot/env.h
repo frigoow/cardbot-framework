@@ -67,6 +67,13 @@ public:
     }
 
     int numEnvs() const { return n_; }
+
+    /**
+     * The agent for the decisions the trainer does not make (!learns), instead
+     * of Encoder::autoAction: e.g. step 6's learned bidder (cardbot/bidding.h).
+     * An empty agent goes back to autoAction. Applies from the next reset.
+     */
+    void setAutoAgent(Agent<G> a) { auto_agent_ = std::move(a); }
     const G& game(int env) const { return games_[std::size_t(env)]; }
     const Enc& encoder() const { return enc_; }
 
@@ -170,7 +177,7 @@ private:
         }
     }
     void advance(G& g, std::mt19937_64& rng) const {
-        while (!g.finished() && !enc_.learns(g)) g.apply(enc_.autoAction(g, rng));
+        while (!g.finished() && !enc_.learns(g)) g.apply(auto_agent_ ? auto_agent_(g, rng) : enc_.autoAction(g, rng));
     }
     template <class F>
     void parallel(F&& f) const {
@@ -188,6 +195,7 @@ private:
     }
 
     Enc enc_;
+    Agent<G> auto_agent_;
     int n_ = 0, threads_ = 1;
     std::vector<std::mt19937_64> rngs_;
     std::vector<G> games_;

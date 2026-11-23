@@ -9,6 +9,8 @@
 // - FastPolicyModel (steps 7 and 8): a small ReLU MLP from the state alone to
 //   one logit per action slot, distilled from the Q network, cheap enough for
 //   the search's play-outs. Bulgarian Belot's BGP1 layout.
+// - BidModel (steps 5 and 6): the value of each bid for the bidder's team,
+//   from the bidder's features and a GRU over the auction so far.
 //
 // The 4-byte tag of each file is the game's choosing.
 
@@ -207,6 +209,75 @@ private:
     bool loaded_ = false;
     int version_ = 0, state_dim_ = 0, h1_ = 0, h2_ = 0, out_dim_ = 0;
     std::vector<float> w1_t_, b1_, w2_, b2_, w3_, b3_;
+};
+
+/**
+ * The bid net: trunk = ResBlock2(ResBlock1([silu(LN(fc(features))), GRU(auction)]));
+ * values = head(trunk), one per bid slot (BidEncoder::bidSlot): the expected
+ * return of the deal for the bidder's team if it makes that bid. A game with a
+ * richer bid net (Belot's per-suit encoder) keeps its own model and agent.
+ */
+class BidModel {
+public:
+    bool load(const std::string& path, const char tag[4] = "CBB1", int expect_version = -1, int expect_feat = 0,
+              int expect_hist = 0, int expect_bids = 0) {
+        using namespace cardbot::nn;
+        loaded_ = false;
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return false;
+        char magic[4]{};
+        std::int32_t hdr[6]{};
+        if (!readBytes(in, magic, 4) || std::memcmp(magic, tag, 4) != 0) return false;
+        if (!readBytes(in, hdr, sizeof(hdr))) return false;
+        if ((expect_version >= 0 && hdr[0] != expect_version) || (expect_feat && hdr[1] != expect_feat) ||
+            (expect_hist && hdr[2] != expect_hist) || (expect_bids && hdr[3] != expect_bids))
+            return false;
+        for (int i = 1; i < 6; ++i)
+            if (hdr[i] <= 0) return false;
+        version_ = hdr[0];
+        feat_dim_ = hdr[1];
+        hist_dim_ = hdr[2];
+        num_bids_ = hdr[3];
+        hidden_ = hdr[4];
+        gru_hidden_ = hdr[5];
+        const int trunk_dim = hidden_ + gru_hidden_;
+        if (!readLinear(in, feat_fc_, feat_dim_, hidden_) || !readLN(in, feat_ln_, hidden_) ||
+            !readGru(in, hist_enc_, hist_dim_, gru_hidden_) || !readResBlock(in, trunk1_, trunk_dim) ||
+            !readResBlock(in, trunk2_, trunk_dim) || !readLinear(in, head_, trunk_dim, num_bids_))
+            return false;
+        loaded_ = true;
+        return true;
+    }
+    bool loaded() const { return loaded_; }
+    int featDim() const { return feat_dim_; }
+    int histDim() const { return hist_dim_; }
+    int numBids() const { return num_bids_; }
+
+    /** numBids() values for the bidder (features: featDim(); history: n_hist rows of histDim()). */
+    void forward(const float* features, const float* history, int n_hist, float* values_out) const {
+        using namespace cardbot::nn;
+        const int trunk_dim = hidden_ + gru_hidden_;
+        thread_local std::vector<float> cat, h1, trunk, scratch;
+        cat.resize(std::size_t(trunk_dim));
+        h1.resize(std::size_t(trunk_dim));
+        trunk.resize(std::size_t(trunk_dim));
+        applyLinear(feat_fc_, features, cat.data());
+        applyLN(feat_ln_, cat.data());
+        for (int i = 0; i < hidden_; ++i) cat[std::size_t(i)] = silu(cat[std::size_t(i)]);
+        applyGru(hist_enc_, history, n_hist, cat.data() + hidden_);
+        applyResBlock(trunk1_, cat.data(), h1.data(), scratch);
+        applyResBlock(trunk2_, h1.data(), trunk.data(), scratch);
+        applyLinear(head_, trunk.data(), values_out);
+    }
+
+private:
+    bool loaded_ = false;
+    int version_ = 0, feat_dim_ = 0, hist_dim_ = 0, num_bids_ = 0, hidden_ = 0, gru_hidden_ = 0;
+    nn::Linear feat_fc_;
+    nn::LayerNorm feat_ln_;
+    nn::GruLayer hist_enc_;
+    nn::ResBlock trunk1_, trunk2_;
+    nn::Linear head_;
 };
 
 }  // namespace cardbot
