@@ -132,7 +132,7 @@ from cardbot.train import dmc, distill, bidding
 
 env = mygame_cpp.BatchEnv(2048, seed=1, threads=4)    # auctions by the baseline bidder
 q = QGRU(env.STATE_DIM, env.PLY_DIM, env.ACTION_DIM)
-dmc.train(env, q, dmc.DMCConfig(rounds=2000))                       # step 4
+dmc.train(env, q, dmc.DMCConfig(episodes=5_000_000))               # step 4
 fast = FastPolicy(env.STATE_DIM, env.POLICY_DIM)
 distill.train(env, q, fast, distill.DistillConfig(rounds=50))      # a first fast net
 fast.export_bin("fast.bin", tag=b"MYP1")
@@ -144,15 +144,22 @@ bid = bidding.train(benv, bid, bidding.BidConfig(iters=200, out="bid.bin", tag=b
 print(bidding.evaluate(benv))                                       # against the baseline bidder
 
 env.use_bid_model("bid.bin", "MYB1")                               # step 6: refit
-dmc.train(env, q, dmc.DMCConfig(rounds=500, lr=1e-4))
+dmc.train(env, q, dmc.DMCConfig(episodes=1_000_000, lr=1e-4))
 fast = FastPolicy(env.STATE_DIM, env.POLICY_DIM)
 distill.train(env, q, fast, distill.DistillConfig(rounds=50))      # step 7
 fast.export_bin("fast.bin", tag=b"MYP1")
 # step 8, C++: rolloutAgent<MyGame>(fastPolicyAgent<MyGame, MyEncoder>(model)), or the game's own search
 ```
 
-Each trainer is a set of functions (collect, loss, train, evaluate) the game
-can replace one by one; the configs carry an `extra` dict for them.
+The trainers carry the recipes of the Manille and Belote bots (the DMC
+replay window, history-length buckets, BF16, AdamW and cosine schedules; the
+streaming, EMA bid trainer), and each game-specific part is a hook: DMC is a
+class (`dmc.DMCTrainer`) whose `env_flags`, `augment`, `loss`, `after_round`
+and `on_round_end` a game overrides (Belot: its suit permutations, its
+card-ownership loss, its belief net, its evaluation and checkpoints);
+distillation and bidding take functions (collect, augment, generate, predict,
+export, loss). Bulgarian Belot trains through them (`python/bg` in
+belote-bot), with results identical to its own earlier trainers.
 
 ## Order of work
 
