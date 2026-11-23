@@ -166,8 +166,9 @@ fixed-seed run in Python).
 2. World sampler: `cardbot/sampler.h` (done, bit-identical on Belot).
 3. The `Game` interface, `randomAgent`, `ismctsAgent`, `rolloutAgent`, the
    search building blocks (`cardbot/search.h`, bit-identical on Belot's
-   search) and duels (done; Belot plays through it). Still to come: the exact
-   endgame.
+   search), the exact endgame (`cardbot/endgame.h`: alpha-beta with the
+   game's table key, move ordering and equivalent-move hooks, and a play-out
+   leaf for it) and duels (done; Belot plays through it).
 4. The Python package: environment template, Q-GRU, DMC, fast policy and its
    distillation with the C++ policy agent, counterfactual bidding
    (`cardbot/bidding.h`, `train/bidding.py`) and the refit with the learned

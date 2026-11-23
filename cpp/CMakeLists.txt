@@ -29,6 +29,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     add_executable(cardbot_test_bidding tests/test_bidding.cpp)
     target_link_libraries(cardbot_test_bidding PRIVATE cardbot)
     add_test(NAME bidding COMMAND cardbot_test_bidding)
+    add_executable(cardbot_test_endgame tests/test_endgame.cpp)
+    target_link_libraries(cardbot_test_endgame PRIVATE cardbot)
+    add_test(NAME endgame COMMAND cardbot_test_endgame)
 endif()
 
 # The Python test module (the toy game's BatchEnv and the Q-GRU loader):
