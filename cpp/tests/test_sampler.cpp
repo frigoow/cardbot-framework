@@ -88,6 +88,7 @@ void testPlacements() {
 void testUniformity() {
     // two hidden seats of 2 from 4 free cards: 6 deals, each about 1/6 of the draws
     Deal d({1, 3, 5, 7}, {3, 3, 3, 3}, {2, 2, 0});
+    CHECK(d.twoSeat());
     CHECK(d.count() == 6);
     std::mt19937_64 rng(1);
     std::array<int, 16> seen{};
@@ -102,12 +103,87 @@ void testUniformity() {
         if (popcount(std::uint64_t(key)) == 2) CHECK(std::abs(seen[std::size_t(key)] - draws / 6) < draws / 60);
 }
 
+void testTwoSeat52Card() {
+    // 52-card Bridge post-dummy case: 2 hidden seats of up to 13 cards, plus 3-seat opening lead
+    using Deal52 = cardbot::HiddenDeal<13>;
+    std::mt19937_64 rng(42);
+    for (int trial = 0; trial < 30; ++trial) {
+        const int n0 = 3 + int(rng() % 5);
+        const int n1 = 3 + int(rng() % 5);
+        const int n = n0 + n1;
+        std::vector<int> owner(std::size_t(n), 0);
+        for (int i = n0; i < n; ++i) owner[std::size_t(i)] = 1;
+        std::shuffle(owner.begin(), owner.end(), rng);
+        std::vector<int> cards;
+        Deal52::Domain dom;
+        Deal52::Weights wts;
+        for (int i = 0; i < n; ++i) {
+            cards.push_back(51 - i * 2);  // exercises high bits > 31
+            std::uint8_t mask = std::uint8_t(1u << owner[std::size_t(i)]);
+            if (rng() % 3 != 0) mask |= 3u;
+            dom.push_back(mask);
+            wts.push_back({0.5 + double(rng() % 10) / 10.0, 0.5 + double(rng() % 10) / 10.0, 0.0});
+        }
+        Deal52 d(cards, dom, {n0, n1, 0});
+        CHECK(d.twoSeat());
+        // Check against full 3-seat buildWays
+        const auto w3 = Deal52::buildWays(dom);
+        CHECK(std::fabs(d.count() - Deal52::waysAt(w3, 0, n0, n1)) < 1e-9);
+
+        std::vector<std::array<double, 3>> freq(std::size_t(n), {0, 0, 0});
+        double worlds = 0;
+        d.enumerate([&](const Deal52::Hands& h) {
+            worlds += 1;
+            CHECK(popcount(h[0]) == n0 && popcount(h[1]) == n1 && h[2] == 0);
+            for (std::size_t i = 0; i < std::size_t(n); ++i) {
+                for (int k = 0; k < 2; ++k) {
+                    if (h[std::size_t(k)] >> cards[i] & 1) {
+                        CHECK(dom[i] >> k & 1);
+                        freq[i][std::size_t(k)] += 1;
+                    }
+                }
+            }
+            return true;
+        });
+        CHECK(worlds == d.count());
+        const auto marg = d.marginals();
+        for (std::size_t i = 0; i < std::size_t(n); ++i) {
+            CHECK(std::fabs(marg[i][0] - freq[i][0] / worlds) < 1e-9);
+            CHECK(std::fabs(marg[i][1] - freq[i][1] / worlds) < 1e-9);
+            CHECK(marg[i][2] == 0.0);
+        }
+        for (int s = 0; s < 10; ++s) {
+            const auto hu = d.sampleUnchecked(rng);
+            const auto hw = d.sampleWeighted(rng, wts, {}, 4);
+            CHECK(hu.has_value() && hw.has_value());
+            CHECK(popcount((*hu)[0]) == n0 && popcount((*hu)[1]) == n1 && (*hu)[2] == 0);
+            CHECK(popcount((*hw)[0]) == n0 && popcount((*hw)[1]) == n1 && (*hw)[2] == 0);
+        }
+    }
+    // Full 26-card 2-seat Bridge hand (13 + 13): C(26, 13) = 10,400,600
+    std::vector<int> c26(26);
+    for (int i = 0; i < 26; ++i) c26[std::size_t(i)] = 26 + i;
+    Deal52 full2(c26, Deal52::Domain(26, 3), {13, 13, 0});
+    CHECK(std::fabs(full2.count() - 10400600.0) < 1e-6);
+    const auto h26 = full2.sampleUnchecked(rng);
+    CHECK(h26.has_value() && popcount((*h26)[0]) == 13 && popcount((*h26)[1]) == 13 && (*h26)[2] == 0);
+    // Full 39-card 3-seat Bridge opening lead (13 + 13 + 13): C(39,13)*C(26,13) = 84,478,098,072,866,400
+    std::vector<int> c39(39);
+    for (int i = 0; i < 39; ++i) c39[std::size_t(i)] = 13 + i;
+    Deal52 full3(c39, Deal52::Domain(39, 7), {13, 13, 13});
+    CHECK(!full3.twoSeat());
+    CHECK(std::fabs(full3.count() - 84478098072866400.0) / 84478098072866400.0 < 1e-12);
+    const auto h39 = full3.sampleUnchecked(rng);
+    CHECK(h39.has_value() && popcount((*h39)[0]) == 13 && popcount((*h39)[1]) == 13 && popcount((*h39)[2]) == 13);
+}
+
 }  // namespace
 
 int main() {
     testCountMarginalsSamples();
     testPlacements();
     testUniformity();
+    testTwoSeat52Card();
     if (failures) { std::fprintf(stderr, "%d check(s) failed\n", failures); return 1; }
     std::printf("cardbot sampler: all checks passed\n");
     return 0;

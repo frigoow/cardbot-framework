@@ -51,6 +51,12 @@ int main() {
     std::printf("rollout-16 vs random: %+.3f +- %.3f tricks per deal\n", r4.mean, r4.ci95);
     CHECK(r4.mean - r4.ci95 > 0);
     CHECK(r4.mean == r5.mean);
+    // custom paired metric (e.g. IMP-like nonlinear score on table0 + table1)
+    const auto r6 = cardbot::duelPaired<G>(
+        deal, cardbot::rolloutAgent<G>(cardbot::randomAgent<G>(), ro), cardbot::randomAgent<G>(), 150,
+        [](double t0, double t1) { return (t0 + t1) > 0 ? 1.0 : (t0 + t1) < 0 ? -1.0 : 0.0; }, 5, 4);
+    CHECK(r6.mean - r6.ci95 > 0);
+    CHECK(r6.a_better + r6.a_tied <= 1.0 + 1e-9);
     if (failures) { std::fprintf(stderr, "%d check(s) failed\n", failures); return 1; }
     std::printf("cardbot agents: all checks passed\n");
     return 0;

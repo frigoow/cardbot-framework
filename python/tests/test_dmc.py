@@ -8,7 +8,7 @@ import torch
 
 mt = pytest.importorskip("mini_tricks_cpp")
 
-from cardbot.models import QGRU
+from cardbot.models import BeliefNet, QGRU
 from cardbot.train import dmc
 
 
@@ -56,6 +56,40 @@ def test_export_matches_cpp_forward(tmp_path):
         n = int(obs["n_legal"][b])
         qc = cpp.forward_q(obs["state"][b], obs["history"][b], int(obs["n_plies"][b]), obs["legal_actions"][b], n)
         np.testing.assert_allclose(qc, q[b, :n], atol=1e-4)
+
+
+def test_belief_export_matches_cpp_forward(tmp_path):
+    torch.manual_seed(42)
+    env = mt.BatchEnv(4, 9, 1)
+    for _ in range(4):
+        env.step(np.zeros(4, dtype=np.int32), auto_reset=False)
+    obs = env.observe()
+    n_cards, n_seats = 52, 3
+    model = BeliefNet(env.STATE_DIM, env.PLY_DIM, n_cards=n_cards, n_seats=n_seats, state_hidden=48, gru_hidden=24).eval()
+    # Give delta_head non-zero weights so we test the full network, not just zeros
+    torch.nn.init.normal_(model.delta_head.weight, std=0.2)
+    torch.nn.init.normal_(model.delta_head.bias, std=0.1)
+    path = tmp_path / "belief.bin"
+    model.export_bin(path, tag=b"BRB1", version=1)
+    cpp = mt.BeliefModel()
+    assert cpp.load(str(path), n_cards, n_seats, "BRB1")
+    rng = np.random.default_rng(7)
+    marg = rng.random((4, n_cards, n_seats), dtype=np.float32)
+    marg[marg < 0.35] = 0.0
+    row_sums = marg.sum(axis=-1, keepdims=True)
+    marg = np.divide(marg, row_sums, out=np.zeros_like(marg), where=row_sums > 0)
+    with torch.no_grad():
+        logits = model(torch.as_tensor(obs["state"]), torch.as_tensor(obs["history"]),
+                       torch.as_tensor(obs["n_plies"]), torch.as_tensor(marg)).numpy()
+    for b in range(4):
+        lc = cpp.forward_logits(obs["state"][b], obs["history"][b], int(obs["n_plies"][b]), marg[b])
+        np.testing.assert_allclose(lc, logits[b], atol=1e-4)
+        pc = cpp.forward_probs(obs["state"][b], obs["history"][b], int(obs["n_plies"][b]), marg[b], 1.0)
+        for c in range(n_cards):
+            if marg[b, c].sum() > 0:
+                np.testing.assert_allclose(pc[c].sum(), 1.0, atol=1e-5)
+            else:
+                np.testing.assert_allclose(pc[c], 0.0, atol=1e-6)
 
 
 def test_dmc_learns_to_beat_random():

@@ -16,6 +16,7 @@
 // Header-only: the arithmetic must compile exactly as the game's own sampler
 // did (the same sums in the same order, the same draws from the generator).
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -50,15 +51,71 @@ public:
 
     HiddenDeal() = default;
     HiddenDeal(std::vector<int> cards, Domain domain, std::array<int, 3> need)
-        : cards_(std::move(cards)), domain_(std::move(domain)), need_(need) {
-        ways_ = buildWays(domain_);
+        : cards_(std::move(cards)), domain_(std::move(domain)), need_(need), two_seat_(need[2] == 0) {
+        if (two_seat_) ways2_ = buildWays2(domain_);
+        else ways_ = buildWays(domain_);
     }
 
     const std::vector<int>& cards() const { return cards_; }
     const Domain& domain() const { return domain_; }
     const std::array<int, 3>& need() const { return need_; }
+    bool twoSeat() const { return two_seat_; }
 
     // ---- the counting tables
+
+    /** 2-seat fast table (when need[2] == 0): w[i][a] = ways for cards i.. with a left for seat 0 (rest to seat 1). */
+    static std::vector<double> buildWays2(const Domain& dom) {
+        const std::size_t n = dom.size();
+        std::vector<double> w((n + 1) * kSide, 0.0);
+        auto at = [&](std::size_t i, int a) -> double& { return w[i * kSide + std::size_t(a)]; };
+        for (std::size_t i = n + 1; i-- > 0;) {
+            const int rem = int(n - i);
+            const int a_lo = std::max(0, rem - MaxHand);
+            const int a_hi = std::min(MaxHand, rem);
+            for (int a = a_lo; a <= a_hi; ++a) {
+                const int b = rem - a;
+                double x = 0.0;
+                if (i == n) {
+                    x = (a == 0 && b == 0) ? 1.0 : 0.0;
+                } else {
+                    const std::uint8_t d = dom[i];
+                    if ((d & 1) && a > 0) x += at(i + 1, a - 1);
+                    if ((d & 2) && b > 0) x += at(i + 1, a);
+                }
+                at(i, a) = x;
+            }
+        }
+        return w;
+    }
+
+    static std::vector<double> buildWaysWeighted2(const Domain& dom, const Weights& weights) {
+        const std::size_t n = dom.size();
+        std::vector<double> w((n + 1) * kSide, 0.0);
+        auto at = [&](std::size_t i, int a) -> double& { return w[i * kSide + std::size_t(a)]; };
+        for (std::size_t i = n + 1; i-- > 0;) {
+            const int rem = int(n - i);
+            const int a_lo = std::max(0, rem - MaxHand);
+            const int a_hi = std::min(MaxHand, rem);
+            for (int a = a_lo; a <= a_hi; ++a) {
+                const int b = rem - a;
+                double x = 0.0;
+                if (i == n) {
+                    x = (a == 0 && b == 0) ? 1.0 : 0.0;
+                } else {
+                    const std::uint8_t d = dom[i];
+                    const auto& cw = weights[i];
+                    if ((d & 1) && a > 0) x += cw[0] * at(i + 1, a - 1);
+                    if ((d & 2) && b > 0) x += cw[1] * at(i + 1, a);
+                }
+                at(i, a) = x;
+            }
+        }
+        return w;
+    }
+
+    static double ways2At(const std::vector<double>& w, std::size_t i, int a) {
+        return w[i * kSide + std::size_t(a)];
+    }
 
     /** w[i][a][b]: the ways to deal cards i.. with a and b left for seats 0 and 1 (the rest to seat 2). */
     static std::vector<double> buildWays(const Domain& dom) {
@@ -119,7 +176,10 @@ public:
     }
 
     /** The deals a domain admits. */
-    double countFor(const Domain& dom) const { return waysAt(buildWays(dom), 0, need_[0], need_[1]); }
+    double countFor(const Domain& dom) const {
+        if (two_seat_) return ways2At(buildWays2(dom), 0, need_[0]);
+        return waysAt(buildWays(dom), 0, need_[0], need_[1]);
+    }
 
     // ---- placements: a mixture of alternative domains
 
@@ -133,10 +193,14 @@ public:
 
     // ---- counting, enumeration, marginals, sampling
 
-    double ways(std::size_t i, int a, int b) const { return waysAt(ways_, i, a, b); }
+    double ways(std::size_t i, int a, int b) const {
+        if (two_seat_) return (int(cards_.size() - i) - a - b == 0) ? ways2At(ways2_, i, a) : 0.0;
+        return waysAt(ways_, i, a, b);
+    }
 
     double count() const {
         if (!placements_.empty()) return placement_total_;
+        if (two_seat_) return ways2At(ways2_, 0, need_[0]);
         return waysAt(ways_, 0, need_[0], need_[1]);
     }
 
@@ -147,6 +211,32 @@ public:
     void enumerate(const std::function<bool(const Hands&)>& visit) const {
         bool stop = false;
         auto enumDom = [&](const Domain& dom) {
+            if (two_seat_) {
+                const auto tab = buildWays2(dom);
+                Hands cur{};
+                std::function<void(std::size_t, int)> dfs = [&](std::size_t i, int a) {
+                    if (stop) return;
+                    if (i == cards_.size()) {
+                        if (!visit(cur)) stop = true;
+                        return;
+                    }
+                    const int b = int(cards_.size() - i) - a;
+                    const std::uint8_t d = dom[i];
+                    const std::uint64_t bit_c = std::uint64_t(1) << cards_[i];
+                    if ((d & 1) && a > 0 && ways2At(tab, i + 1, a - 1) > 0) {
+                        cur[0] |= bit_c;
+                        dfs(i + 1, a - 1);
+                        cur[0] &= ~bit_c;
+                    }
+                    if ((d & 2) && b > 0 && ways2At(tab, i + 1, a) > 0) {
+                        cur[1] |= bit_c;
+                        dfs(i + 1, a);
+                        cur[1] &= ~bit_c;
+                    }
+                };
+                if (ways2At(tab, 0, need_[0]) > 0) dfs(0, need_[0]);
+                return;
+            }
             const auto tab = buildWays(dom);
             Hands cur{};
             std::function<void(std::size_t, int, int)> dfs = [&](std::size_t i, int a, int b) {
@@ -192,6 +282,41 @@ public:
         std::vector<std::array<double, 3>> marg(n, std::array<double, 3>{0.0, 0.0, 0.0});
         if (n == 0) return marg;
         auto accumDom = [&](const Domain& dom, double scale) {
+            if (two_seat_) {
+                const auto bwd = buildWays2(dom);
+                const double tot = ways2At(bwd, 0, need_[0]);
+                if (tot <= 0.0) return;
+                std::vector<double> fwd((n + 1) * kSide, 0.0);
+                auto fat = [&](std::size_t i, int a) -> double& { return fwd[i * kSide + std::size_t(a)]; };
+                fat(0, need_[0]) = 1.0;
+                for (std::size_t i = 0; i < n; ++i) {
+                    const std::uint8_t d = dom[i];
+                    double s0 = 0.0, s1 = 0.0;
+                    for (int a = 0; a <= need_[0]; ++a) {
+                        const double fv = fat(i, a);
+                        if (fv == 0.0) continue;
+                        const int b = int(n - i) - a;
+                        if ((d & 1) && a > 0) {
+                            const double bv = ways2At(bwd, i + 1, a - 1);
+                            if (bv > 0.0) {
+                                fat(i + 1, a - 1) += fv;
+                                s0 += fv * bv;
+                            }
+                        }
+                        if ((d & 2) && b > 0) {
+                            const double bv = ways2At(bwd, i + 1, a);
+                            if (bv > 0.0) {
+                                fat(i + 1, a) += fv;
+                                s1 += fv * bv;
+                            }
+                        }
+                    }
+                    const double inv = scale / tot;
+                    marg[i][0] += s0 * inv;
+                    marg[i][1] += s1 * inv;
+                }
+                return;
+            }
             const auto bwd = buildWays(dom);
             const double tot = waysAt(bwd, 0, need_[0], need_[1]);
             if (tot <= 0.0) return;
@@ -246,6 +371,34 @@ public:
 
     /** One deal, uniformly over the domain (or the placements); nothing when there is none. */
     std::optional<Hands> sampleUnchecked(std::mt19937_64& rng) const {
+        if (two_seat_) {
+            const Domain* dom = &domain_;
+            const std::vector<double>* table = &ways2_;
+            std::vector<double> local;
+            std::uniform_real_distribution<double> u(0.0, 1.0);
+            if (!placements_.empty()) {
+                double x = u(rng) * placement_total_;
+                std::size_t j = 0;
+                while (j + 1 < placements_.size() && x >= placements_[j].weight) x -= placements_[j++].weight;
+                dom = &placements_[j].domain;
+                local = buildWays2(*dom);
+                table = &local;
+            }
+            int a = need_[0];
+            if (ways2At(*table, 0, a) <= 0.0) return std::nullopt;
+            Hands h{};
+            for (std::size_t i = 0; i < cards_.size(); ++i) {
+                const int b = int(cards_.size() - i) - a;
+                const std::uint8_t d = (*dom)[i];
+                const double w0 = (d & 1) && a > 0 ? ways2At(*table, i + 1, a - 1) : 0.0;
+                const double w1 = (d & 2) && b > 0 ? ways2At(*table, i + 1, a) : 0.0;
+                const double x = u(rng) * (w0 + w1);
+                const int k = (x < w0 || w1 <= 0.0) ? 0 : 1;
+                h[std::size_t(k)] |= std::uint64_t(1) << cards_[i];
+                if (k == 0) --a;
+            }
+            return h;
+        }
         const Domain* dom = &domain_;
         const std::vector<double>* table = &ways_;
         std::vector<double> local;
@@ -298,6 +451,56 @@ public:
      */
     std::optional<Hands> sampleWeighted(std::mt19937_64& rng, const Weights& weights, const Accept& accept,
                                         int max_tries) const {
+        if (two_seat_) {
+            std::uniform_real_distribution<double> u(0.0, 1.0);
+            std::vector<double> pl_weights;
+            double pl_tot = 0.0;
+            std::vector<double> base_tab;
+            if (!placements_.empty()) {
+                pl_weights.reserve(placements_.size());
+                for (const Placement& pl : placements_) {
+                    const auto tab = buildWaysWeighted2(pl.domain, weights);
+                    const double w = ways2At(tab, 0, need_[0]);
+                    pl_weights.push_back(w);
+                    pl_tot += w;
+                }
+                if (pl_tot <= 0.0) return sample(rng, accept, max_tries);
+            } else {
+                base_tab = buildWaysWeighted2(domain_, weights);
+                if (ways2At(base_tab, 0, need_[0]) <= 0.0) return sample(rng, accept, max_tries);
+            }
+
+            std::optional<Hands> last;
+            for (int t = 0; t < max_tries; ++t) {
+                const Domain* dom = &domain_;
+                const std::vector<double>* tab = &base_tab;
+                std::vector<double> local;
+                if (!placements_.empty()) {
+                    double x = u(rng) * pl_tot;
+                    std::size_t j = 0;
+                    while (j + 1 < placements_.size() && x >= pl_weights[j]) x -= pl_weights[j++];
+                    dom = &placements_[j].domain;
+                    local = buildWaysWeighted2(*dom, weights);
+                    tab = &local;
+                }
+                int a = need_[0];
+                Hands h{};
+                for (std::size_t i = 0; i < cards_.size(); ++i) {
+                    const int b = int(cards_.size() - i) - a;
+                    const std::uint8_t d = (*dom)[i];
+                    const auto& cw = weights[i];
+                    const double w0 = (d & 1) && a > 0 ? cw[0] * ways2At(*tab, i + 1, a - 1) : 0.0;
+                    const double w1 = (d & 2) && b > 0 ? cw[1] * ways2At(*tab, i + 1, a) : 0.0;
+                    const double x = u(rng) * (w0 + w1);
+                    const int k = (x < w0 || w1 <= 0.0) ? 0 : 1;
+                    h[std::size_t(k)] |= std::uint64_t(1) << cards_[i];
+                    if (k == 0) --a;
+                }
+                last = h;
+                if (!accept || accept(h)) return h;
+            }
+            return last;
+        }
         std::uniform_real_distribution<double> u(0.0, 1.0);
         std::vector<double> pl_weights;
         double pl_tot = 0.0;
@@ -355,7 +558,9 @@ private:
     std::vector<int> cards_;
     Domain domain_;
     std::array<int, 3> need_{};
+    bool two_seat_ = false;
     std::vector<double> ways_;
+    std::vector<double> ways2_;
     std::vector<Placement> placements_;
     double placement_total_ = 0;
 };

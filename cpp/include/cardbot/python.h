@@ -218,4 +218,40 @@ inline void bindFastPolicy(py::module_& m) {
         });
 }
 
+/** BeliefModel for Python: load an exported BeliefNet and run the C++ forward pass. */
+inline void bindBeliefModel(py::module_& m) {
+    py::class_<BeliefModel>(m, "BeliefModel")
+        .def(py::init<>())
+        .def("load", [](BeliefModel& b, const std::string& path, int n_cards, int n_seats, const std::string& tag) {
+            if (tag.size() != 4) throw std::invalid_argument("tag: 4 bytes");
+            return b.load(path, n_cards, n_seats, tag.c_str());
+        }, py::arg("path"), py::arg("n_cards"), py::arg("n_seats") = 3, py::arg("tag") = "BGB1")
+        .def_property_readonly("state_dim", &BeliefModel::stateDim)
+        .def_property_readonly("ply_dim", &BeliefModel::plyDim)
+        .def_property_readonly("num_cards", &BeliefModel::numCards)
+        .def_property_readonly("num_seats", &BeliefModel::numSeats)
+        .def("forward_logits", [](const BeliefModel& b, py::array_t<float, py::array::c_style | py::array::forcecast> state,
+                                  py::array_t<float, py::array::c_style | py::array::forcecast> history, int n_plies,
+                                  py::array_t<float, py::array::c_style | py::array::forcecast> marginals) {
+            const py::ssize_t nc = b.numCards(), ns = b.numSeats();
+            if (state.size() != b.stateDim() || history.size() < py::ssize_t(n_plies) * b.plyDim() ||
+                marginals.size() != nc * ns)
+                throw std::invalid_argument("forward_logits: input size mismatch");
+            py::array_t<float> out({nc, ns});
+            b.forwardLogits(state.data(), history.data(), n_plies, marginals.data(), out.mutable_data());
+            return out;
+        })
+        .def("forward_probs", [](const BeliefModel& b, py::array_t<float, py::array::c_style | py::array::forcecast> state,
+                                 py::array_t<float, py::array::c_style | py::array::forcecast> history, int n_plies,
+                                 py::array_t<float, py::array::c_style | py::array::forcecast> marginals, float temperature) {
+            const py::ssize_t nc = b.numCards(), ns = b.numSeats();
+            if (state.size() != b.stateDim() || history.size() < py::ssize_t(n_plies) * b.plyDim() ||
+                marginals.size() != nc * ns)
+                throw std::invalid_argument("forward_probs: input size mismatch");
+            py::array_t<float> out({nc, ns});
+            b.forwardProbs(state.data(), history.data(), n_plies, marginals.data(), out.mutable_data(), temperature);
+            return out;
+        }, py::arg("state"), py::arg("history"), py::arg("n_plies"), py::arg("marginals"), py::arg("temperature") = 1.0f);
+}
+
 }  // namespace cardbot

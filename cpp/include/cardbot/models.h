@@ -17,6 +17,7 @@
 #include "cardbot/nn.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -278,6 +279,140 @@ private:
     nn::GruLayer hist_enc_;
     nn::ResBlock trunk1_, trunk2_;
     nn::Linear head_;
+};
+
+/**
+ * The belief net (python/cardbot/models.py BeliefNet): corrects the world
+ * sampler's exact card marginals using the state and play history.
+ *
+ *   logits[c, k] = log(max(marginals[c, k], 1e-6)) + delta[c, k]   (or -1e9 when marginals[c, k] <= 0)
+ *
+ * Matches Bulgarian Belot's BGB1 binary layout (4-byte tag, 5 int32 sizes:
+ * version, state_dim, ply_dim, state_hidden, gru_hidden, then the layers).
+ * Parameterized by n_cards and n_seats at load time (32 x 3 for Belot, 52 x 3
+ * for Bridge, etc.).
+ */
+class BeliefModel {
+public:
+    bool load(const std::string& path, int n_cards, int n_seats = 3, const char tag[4] = "BGB1",
+              int expect_version = -1, int expect_state = 0, int expect_ply = 0) {
+        using namespace cardbot::nn;
+        loaded_ = false;
+        if (n_cards <= 0 || n_seats <= 0) return false;
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return false;
+        char magic[4]{};
+        std::int32_t hdr[5]{};
+        if (!readBytes(in, magic, 4) || std::memcmp(magic, tag, 4) != 0) return false;
+        if (!readBytes(in, hdr, sizeof(hdr))) return false;
+        if ((expect_version >= 0 && hdr[0] != expect_version) || (expect_state && hdr[1] != expect_state) ||
+            (expect_ply && hdr[2] != expect_ply) || hdr[1] <= 0 || hdr[2] <= 0 || hdr[3] <= 0 || hdr[4] <= 0)
+            return false;
+        version_ = hdr[0];
+        state_dim_ = hdr[1];
+        ply_dim_ = hdr[2];
+        state_hidden_ = hdr[3];
+        gru_hidden_ = hdr[4];
+        n_cards_ = n_cards;
+        n_seats_ = n_seats;
+        const int marg_dim = n_cards_ * n_seats_;
+        const int trunk_dim = state_hidden_ + gru_hidden_;
+        if (!readLinear(in, state_fc_, state_dim_ + marg_dim, state_hidden_) || !readLN(in, state_ln_, state_hidden_) ||
+            !readGru(in, hist_enc_, ply_dim_, gru_hidden_) || !readResBlock(in, trunk1_, trunk_dim) ||
+            !readResBlock(in, trunk2_, trunk_dim) || !readLinear(in, delta_head_, trunk_dim, marg_dim)) {
+            return false;
+        }
+        loaded_ = true;
+        return true;
+    }
+
+    bool loaded() const { return loaded_; }
+    int version() const { return version_; }
+    int stateDim() const { return state_dim_; }
+    int plyDim() const { return ply_dim_; }
+    int numCards() const { return n_cards_; }
+    int numSeats() const { return n_seats_; }
+
+    /**
+     * Logits [n_cards * n_seats] from state [stateDim()], history [n_plies * plyDim()],
+     * and sampler_marginals [n_cards * n_seats]. Thread-safe.
+     */
+    void forwardLogits(const float* state, const float* history, int n_plies, const float* sampler_marginals,
+                       float* logits_out) const {
+        using namespace cardbot::nn;
+        const int marg_dim = n_cards_ * n_seats_;
+        const int trunk_dim = state_hidden_ + gru_hidden_;
+        thread_local std::vector<float> in_vec, cat, h1, trunk, scratch, delta;
+        in_vec.resize(std::size_t(state_dim_ + marg_dim));
+        std::memcpy(in_vec.data(), state, std::size_t(state_dim_) * sizeof(float));
+        std::memcpy(in_vec.data() + state_dim_, sampler_marginals, std::size_t(marg_dim) * sizeof(float));
+
+        cat.resize(std::size_t(trunk_dim));
+        applyLinear(state_fc_, in_vec.data(), cat.data());
+        applyLN(state_ln_, cat.data());
+        for (int i = 0; i < state_hidden_; ++i) cat[std::size_t(i)] = silu(cat[std::size_t(i)]);
+        applyGru(hist_enc_, history, n_plies, cat.data() + state_hidden_);
+
+        h1.resize(std::size_t(trunk_dim));
+        trunk.resize(std::size_t(trunk_dim));
+        applyResBlock(trunk1_, cat.data(), h1.data(), scratch);
+        applyResBlock(trunk2_, h1.data(), trunk.data(), scratch);
+
+        delta.resize(std::size_t(marg_dim));
+        applyLinear(delta_head_, trunk.data(), delta.data());
+        for (int i = 0; i < marg_dim; ++i) {
+            const float m = sampler_marginals[i];
+            if (m <= 0.0f) logits_out[i] = -1e9f;
+            else logits_out[i] = std::log(std::max(m, 1e-6f)) + delta[std::size_t(i)];
+        }
+    }
+
+    /** Softmax per card over the n_seats owners, scaled by 1/temperature. Thread-safe. */
+    void forwardProbs(const float* state, const float* history, int n_plies, const float* sampler_marginals,
+                      float* probs_out, float temperature = 1.0f) const {
+        const int marg_dim = n_cards_ * n_seats_;
+        thread_local std::vector<float> logits;
+        logits.resize(std::size_t(marg_dim));
+        forwardLogits(state, history, n_plies, sampler_marginals, logits.data());
+        const float inv_t = 1.0f / std::max(temperature, 1e-4f);
+        for (int c = 0; c < n_cards_; ++c) {
+            const int base = c * n_seats_;
+            float mx = -1e30f;
+            bool any = false;
+            for (int k = 0; k < n_seats_; ++k) {
+                if (sampler_marginals[base + k] > 0.0f) {
+                    any = true;
+                    mx = std::max(mx, logits[std::size_t(base + k)] * inv_t);
+                }
+            }
+            if (!any) {
+                for (int k = 0; k < n_seats_; ++k) probs_out[base + k] = 0.0f;
+                continue;
+            }
+            float sum = 0.0f;
+            for (int k = 0; k < n_seats_; ++k) {
+                if (sampler_marginals[base + k] > 0.0f) {
+                    const float e = std::exp(logits[std::size_t(base + k)] * inv_t - mx);
+                    probs_out[base + k] = e;
+                    sum += e;
+                } else {
+                    probs_out[base + k] = 0.0f;
+                }
+            }
+            const float inv = sum > 0.0f ? 1.0f / sum : 0.0f;
+            for (int k = 0; k < n_seats_; ++k) probs_out[base + k] *= inv;
+        }
+    }
+
+private:
+    bool loaded_ = false;
+    int version_ = 0, state_dim_ = 0, ply_dim_ = 0, state_hidden_ = 0, gru_hidden_ = 0;
+    int n_cards_ = 0, n_seats_ = 0;
+    nn::Linear state_fc_;
+    nn::LayerNorm state_ln_;
+    nn::GruLayer hist_enc_;
+    nn::ResBlock trunk1_, trunk2_;
+    nn::Linear delta_head_;
 };
 
 }  // namespace cardbot

@@ -48,6 +48,7 @@ PYBIND11_MODULE(mini_tricks_cpp, m) {
     cardbot::bindQGru(m);
     cardbot::bindFastPolicy(m);
     cardbot::bindBidModel(m);
+    cardbot::bindBeliefModel(m);
     // the toy game with an auction (steps 5 and 6)
     using T = cardbot_test::MiniTrump;
     cardbot::bindBatchEnv<T, cardbot_test::MiniTrumpEncoder, cardbot_test::MiniTrumpBidEncoder>(m, "TrumpEnv");
