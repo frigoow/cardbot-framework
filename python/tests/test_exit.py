@@ -39,8 +39,8 @@ def test_exit_trains_q_belief_and_fast():
     b = BeliefNet(state_dim, ply_dim, n_cards=policy_dim, n_seats=3, state_hidden=32, gru_hidden=16)
     f = FastPolicy(state_dim, policy_dim, h1=32, h2=16)
 
-    cfg = cb_exit.ExitConfig(epochs=6, batch_size=64, lr=3e-3, fast_lr=3e-3, kl_temp=0.5, log=None, device="cpu")
+    cfg = cb_exit.ExitConfig(epochs=10, batch_size=64, lr=3e-3, fast_lr=3e-3, kl_temp=0.5, log=None, device="cpu")
     metrics = cb_exit.train(ds, q, cfg, belief_model=b, fast_model=f)
-    assert metrics["q_top1"] > 0.75
+    assert metrics["q_top1"] > 0.80
     assert metrics["belief_ce"] < 1.2
     assert metrics["fast_ce"] > 0.0
