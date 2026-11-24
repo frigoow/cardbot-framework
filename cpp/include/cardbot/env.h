@@ -40,6 +40,11 @@ template <class Enc, class = void>
 struct HasPolicySlots : std::false_type {};
 template <class Enc>
 struct HasPolicySlots<Enc, std::void_t<decltype(Enc::kPolicyDim)>> : std::true_type {};
+
+template <class Enc, class = void>
+struct HasBelief : std::false_type {};
+template <class Enc>
+struct HasBelief<Enc, std::void_t<decltype(Enc::kBeliefCards), decltype(Enc::kBeliefSeats)>> : std::true_type {};
 }  // namespace detail
 
 /** The fast policy's number of outputs for the encoder. */
@@ -139,6 +144,25 @@ public:
         });
     }
 
+    /** Optional BeliefNet targets [B, kBeliefCards] and sampler marginals [B, kBeliefCards, kBeliefSeats]. */
+    void setCollectBelief(bool on) { collect_belief_ = on; }
+    bool collectBelief() const { return collect_belief_; }
+
+    template <class E = Enc, std::enable_if_t<detail::HasBelief<E>::value, int> = 0>
+    void observeBelief(std::int8_t* targets, float* marginals) const {
+        constexpr std::size_t kC = std::size_t(Enc::kBeliefCards);
+        constexpr std::size_t kS = std::size_t(Enc::kBeliefSeats);
+        parallel([&](int b) {
+            std::int8_t* t_out = targets + std::size_t(b) * kC;
+            float* m_out = marginals + std::size_t(b) * kC * kS;
+            std::fill(t_out, t_out + kC, std::int8_t(-1));
+            std::fill(m_out, m_out + kC * kS, 0.0f);
+            const G& g = games_[std::size_t(b)];
+            if (finished_[std::size_t(b)] || g.finished()) return;
+            enc_.encodeBelief(g, g.toMove(), t_out, m_out);
+        });
+    }
+
     /**
      * Plays legal action action_idx[b] in every env. A game that ends writes
      * done[b] = 1 and its return per team (reward[b*2], reward[b*2+1]); with
@@ -197,6 +221,7 @@ private:
     Enc enc_;
     Agent<G> auto_agent_;
     int n_ = 0, threads_ = 1;
+    bool collect_belief_ = false;
     std::vector<std::mt19937_64> rngs_;
     std::vector<G> games_;
     std::vector<std::vector<Action>> legal_;

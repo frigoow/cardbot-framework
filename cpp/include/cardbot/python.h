@@ -60,6 +60,12 @@ void bindBatchEnv(py::module_& m, const char* name) {
         }, py::arg("path"), py::arg("tag") = "CBB1");
         cls.def("use_auto_action", [](Env& env) { env.setAutoAgent({}); });
     }
+    if constexpr (detail::HasBelief<Enc>::value) {
+        cls.def_property_readonly_static("BELIEF_CARDS", [](py::object) { return Enc::kBeliefCards; })
+           .def_property_readonly_static("BELIEF_SEATS", [](py::object) { return Enc::kBeliefSeats; })
+           .def("set_collect_belief", &Env::setCollectBelief, py::arg("on"))
+           .def_property_readonly("collect_belief", &Env::collectBelief);
+    }
     cls
         .def(py::init([](int num_envs, std::uint64_t seed, int threads) { return new Env(num_envs, seed, threads); }),
              py::arg("num_envs"), py::arg("seed") = 1, py::arg("threads") = 4)
@@ -94,6 +100,18 @@ void bindBatchEnv(py::module_& m, const char* name) {
             d["n_legal"] = n_legal;
             d["team"] = team;
             d["legal_slots"] = slots;
+            if constexpr (detail::HasBelief<Enc>::value) {
+                if (env.collectBelief()) {
+                    py::array_t<std::int8_t> bt({b, py::ssize_t(Enc::kBeliefCards)});
+                    py::array_t<float> bm({b, py::ssize_t(Enc::kBeliefCards), py::ssize_t(Enc::kBeliefSeats)});
+                    {
+                        py::gil_scoped_release release;
+                        env.observeBelief(bt.mutable_data(), bm.mutable_data());
+                    }
+                    d["belief_targets"] = bt;
+                    d["belief_marginals"] = bm;
+                }
+            }
             return d;
         })
         .def("step", [](Env& env, py::array_t<std::int32_t, py::array::c_style | py::array::forcecast> action_idx,
