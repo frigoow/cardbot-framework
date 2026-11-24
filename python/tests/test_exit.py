@@ -15,11 +15,12 @@ def test_exit_trains_q_belief_and_fast():
     history = rng.normal(size=(n, max_plies, ply_dim)).astype(np.float32)
     n_plies = rng.integers(0, max_plies + 1, size=(n,), dtype=np.int32)
     actions = rng.normal(size=(n, max_legal, action_dim)).astype(np.float32)
-    n_legal = np.full((n,), max_legal, dtype=np.int32)
+    n_legal = np.full((n,), max_legal - 1, dtype=np.int32)  # exercise padded slots (-1) alongside valid slot 0
     # Linearly separable synthetic Q targets so QGRU and FastPolicy must fit cleanly
     w = rng.normal(size=(action_dim,)).astype(np.float32)
     q_targets = (actions @ w).astype(np.float32)
     legal_slots = np.tile(np.arange(max_legal, dtype=np.int32), (n, 1))
+    legal_slots[:, -1] = -1
     belief_targets = rng.integers(0, 3, size=(n, policy_dim), dtype=np.int8)
     belief_marginals = np.full((n, policy_dim, 3), 1.0 / 3.0, dtype=np.float32)
 
@@ -43,4 +44,4 @@ def test_exit_trains_q_belief_and_fast():
     metrics = cb_exit.train(ds, q, cfg, belief_model=b, fast_model=f)
     assert metrics["q_top1"] > 0.80
     assert metrics["belief_ce"] < 1.2
-    assert metrics["fast_ce"] > 0.0
+    assert 0.0 < metrics["fast_ce"] < 5.0

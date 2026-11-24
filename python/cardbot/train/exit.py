@@ -207,11 +207,13 @@ def train(
                 bsz = slots.shape[0]
                 p_dim = fast_model.out_dim
                 tgt = torch.zeros((bsz, p_dim), dtype=torch.float32, device=device)
-                msk = torch.zeros((bsz, p_dim), dtype=torch.bool, device=device)
+                msk_cnt = torch.zeros((bsz, p_dim), dtype=torch.float32, device=device)
                 ok = valid & (slots >= 0)
                 safe_slots = slots.clamp(min=0)
-                tgt.scatter_add_(1, safe_slots, t_probs * ok.float())
-                msk.scatter_(1, safe_slots, ok)
+                ok_f = ok.float()
+                tgt.scatter_add_(1, safe_slots, t_probs * ok_f)
+                msk_cnt.scatter_add_(1, safe_slots, ok_f)
+                msk = msk_cnt > 0.0
                 f_logits = fast_model(batch["state"].float()).masked_fill(~msk, -1e9)
                 f_loss = -(tgt * F.log_softmax(f_logits, dim=-1)).sum(dim=-1).mean()
                 f_opt.zero_grad(set_to_none=True)
