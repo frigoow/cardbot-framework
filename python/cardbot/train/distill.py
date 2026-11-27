@@ -39,6 +39,9 @@ class DistillConfig:
     temperature: float = 0.04          # of the teacher's softmax, in the game's return units
     eps: float = 0.0                   # the teacher's exploration while collecting (0: greedy)
     min_legal: int = 2                 # decisions with fewer legal actions are left out
+    max_ply: int = 0                   # > 0: hard-drop decisions with n_plies >= max_ply (pure early-trick net)
+    early_ply: int = 0                 # > 0: upweight decisions with n_plies < early_ply by early_weight (keeps late plies calibrated)
+    early_weight: float = 1.0          # loss weight for n_plies < early_ply when early_ply > 0
     seed: int = 1                      # the minibatch order (and the exploration)
     collect_seed: Callable[[int], int] | None = None   # round -> env seed (default: seed * 100003 + round)
     amp: bool = True                   # the teacher in BF16 autocast on CUDA
@@ -56,26 +59,30 @@ def collect(env, teacher, cfg: DistillConfig, seed: int) -> dict:
     rng = np.random.default_rng(seed)
     bsz, p, k = env.num_envs, env.POLICY_DIM, env.MAX_LEGAL
     idx_range = torch.arange(k, device=device).unsqueeze(0)
-    states, masks, targets = [], [], []
+    states, masks, targets, weights = [], [], [], []
     finished = np.zeros(bsz, dtype=bool)
     rows = np.repeat(np.arange(bsz), k).reshape(bsz, k)
     for _ in range(env.MAX_PLIES):
         if finished.all():
             break
         obs = env.observe()
+        np_arr = obs["n_plies"]
+        if cfg.max_ply > 0 and (finished | (np_arr >= cfg.max_ply)).all():
+            break
         nl = obs["n_legal"]
-        max_p = int(obs["n_plies"].max())
+        max_p = int(np_arr.max())
         s_t = torch.from_numpy(obs["state"]).to(device)
         a_t = torch.from_numpy(obs["legal_actions"]).to(device)
         h_t = (torch.from_numpy(obs["history"][:, :max_p, :]).to(device) if max_p > 0
                else torch.zeros((bsz, 1, env.PLY_DIM), dtype=torch.float32, device=device))
-        np_t = torch.from_numpy(obs["n_plies"]).to(device)
+        np_t = torch.from_numpy(np_arr).to(device)
         valid = idx_range < torch.from_numpy(nl).to(device).unsqueeze(1)
         with dmc.autocast(device, cfg.amp):
             q = teacher(s_t, a_t, h_t, np_t, valid_mask=valid).float().masked_fill(~valid, -1e9)
         probs = F.softmax(q / cfg.temperature, dim=-1).cpu().numpy()
         greedy = q.argmax(dim=-1).cpu().numpy().astype(np.int32)
-        keep = np.nonzero((~finished) & (nl >= max(1, cfg.min_legal)))[0]
+        ply_ok = (np_arr < cfg.max_ply) if cfg.max_ply > 0 else True
+        keep = np.nonzero((~finished) & (nl >= max(1, cfg.min_legal)) & ply_ok)[0]
         if len(keep):
             slots = obs["legal_slots"][keep]
             ok = slots >= 0
@@ -87,20 +94,35 @@ def collect(env, teacher, cfg: DistillConfig, seed: int) -> dict:
             states.append(obs["state"][keep])
             masks.append(msk)
             targets.append(tgt)
+            if cfg.early_ply > 0 and cfg.early_weight != 1.0:
+                w = np.where(np_arr[keep] < cfg.early_ply, cfg.early_weight, 1.0).astype(np.float32)
+            else:
+                w = np.ones(len(keep), dtype=np.float32)
+            weights.append(w)
         idx = greedy
         if cfg.eps > 0:
             explore = (rng.random(bsz) < cfg.eps) & (nl > 1)
             idx = np.where(explore, (rng.random(bsz) * np.maximum(nl, 1)).astype(np.int32), greedy)
         done, _ = env.step(idx.astype(np.int32), auto_reset=False)
         finished |= done != 0
-    return {"state": np.concatenate(states), "mask": np.concatenate(masks), "target": np.concatenate(targets)}
+    return {
+        "state": np.concatenate(states),
+        "mask": np.concatenate(masks),
+        "target": np.concatenate(targets),
+        "weight": np.concatenate(weights),
+    }
 
 
 def soft_ce_loss(student, batch: dict) -> tuple[torch.Tensor, torch.Tensor]:
     """Cross-entropy of the student's legal-slot softmax against the targets, and its top-1
     agreement with the target's best slot."""
     logits = student(batch["state"]).masked_fill(batch["mask"] == 0, -1e9)
-    loss = -(batch["target"] * F.log_softmax(logits, dim=-1)).sum(dim=-1).mean()
+    per_ex = -(batch["target"] * F.log_softmax(logits, dim=-1)).sum(dim=-1)
+    if "weight" in batch:
+        w = batch["weight"]
+        loss = (per_ex * w).sum() / w.sum().clamp(min=1e-6)
+    else:
+        loss = per_ex.mean()
     top1 = (logits.argmax(dim=-1) == batch["target"].argmax(dim=-1)).float().mean()
     return loss, top1
 
