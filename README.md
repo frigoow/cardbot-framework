@@ -8,15 +8,16 @@ submodule:
 | Game | Repository | App |
 |---|---|---|
 | Manille | [manil-bot](https://github.com/frigoow/manil-bot) | `android/` |
-| Bulgarian Belot | belote-bot | `app/` |
+| Bulgarian Belot | [belote-bot](https://github.com/frigoow/belote-bot) | `app/` |
+| Contract Bridge (card play) | [bridge-bot](https://github.com/frigoow/bridge-bot) | `cpp/` + `python/` |
 
 ## What is in it
 
 | Path | What |
 |---|---|
 | `platform/` | A Kotlin Multiplatform + Compose module: profiles, saved games and statistics files; English plus the game's language (`tr`, and `tl` for these shared screens); the table themes; cards drawn through each game's `Deck` (its own card numbering); speech bubbles, prompts, score boxes, the profile dialog and theme picker; the felt table and its scenery; the worker thread the bots think on; file storage on the JVMs; desktop paths |
-| `cpp/` | The game-independent C++ of the bots (see [docs/DESIGN.md](docs/DESIGN.md)), header-only: `game.h` (the interface a game implements), `agents.h` (random and ISMCTS baselines, the latter through the bundled ismcsolver, and a determinized play-out search with optional leaves), `endgame.h` (the exact endgame: alpha-beta with the game's hooks), `policy.h` (the distilled fast policy as an agent and a move prior), `models.h` (the Q-GRU, fast-policy and bid-net forward passes), `bidding.h` (counterfactual bid targets, bidders, tables), `eval.h` (duplicate-deal duels with paired 95% intervals), `sampler.h` (the world sampler's counting core), `search.h` (world drawing, candidate racing, Q blend, overrule test) and `nn.h` (network building blocks). A game's CMake: `add_subdirectory(cardbot-framework/cpp cardbot)` and link `cardbot` |
-| `python/cardbot` | The Python package (`pip install -e python/`): `models.py` (the Q-GRU, the fast policy and the bid net in PyTorch, exported in the layouts `cardbot/models.h` reads), `train/dmc.py` (DMC self-play: collect, loss, training loop and evaluation, each replaceable) `train/bidding.py` (the bid net on counterfactual bid values) and `train/distill.py` (the Q network distilled into the fast policy). A game's environment comes from `cardbot/env.h` (`BatchEnv<Game, Encoder>`) through a one-line binding (`cardbot/python.h`) |
+| `cpp/` | The game-independent C++ of the bots (see [docs/DESIGN.md](docs/DESIGN.md)), header-only: `game.h` (the interface a game implements), `agents.h` (random and ISMCTS baselines, the latter through the bundled ismcsolver, and a determinized play-out search with optional leaves), `endgame.h` (the exact endgame: alpha-beta with the game's hooks), `policy.h` (the distilled fast policy as an agent and a move prior), `models.h` (the Q-GRU, sparse-ReLU fast-policy, GRU belief-net, and bid-net forward passes), `bidding.h` (counterfactual bid targets, bidders, tables), `eval.h` (duplicate-deal duels with paired 95% intervals), `sampler.h` (the world sampler's counting core), `search.h` (world drawing, candidate racing with work-stealing multi-core pool, Q blend, overrule test) and `nn.h` (network building blocks). A game's CMake: `add_subdirectory(cardbot-framework/cpp cardbot)` and link `cardbot` |
+| `python/cardbot` | The Python package (`pip install -e python/`): `models.py` (the Q-GRU, fast policy, GRU belief net, and bid net in PyTorch, exported in the layouts `cardbot/models.h` reads), `train/dmc.py` (DMC self-play: collect, loss, training loop and evaluation, each replaceable), `train/exit.py` (Expert Iteration on search-labeled deals), `train/bidding.py` (the bid net on counterfactual bid values) and `train/distill.py` (the Q network distilled into the fast policy). A game's environment comes from `cardbot/env.h` (`BatchEnv<Game, Encoder>`) through a one-line binding (`cardbot/python.h`) |
 | `build-logic/` | The desktop apps' native build: `CMakeJniLibrary` (a game engine's JNI library, built with CMake for the OS at hand), `findCmake`, `findJniInclude` |
 
 No game rules live here.
