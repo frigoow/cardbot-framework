@@ -19,16 +19,144 @@
 // exactly what it was (same arithmetic, same draws from the generator).
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <vector>
 
 namespace cardbot {
+
+namespace detail {
+
+// Persistent work-stealing thread pool for parallelizing world evaluations within one move.
+// Keeping worker threads alive preserves thread_local buffers (e.g. Bo Haglund DDS SolverContext).
+class SearchPool {
+public:
+    SearchPool() = default;
+    ~SearchPool() {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            stop_ = true;
+        }
+        cv_.notify_all();
+        for (auto& t : workers_) {
+            if (t.joinable()) t.join();
+        }
+    }
+
+    template <class Fn>
+    void parallelRange(std::size_t begin, std::size_t end, unsigned threads, Fn&& fn) {
+        if (threads <= 1 || end <= begin + 1) {
+            for (std::size_t i = begin; i < end; ++i) fn(i);
+            return;
+        }
+        const std::size_t n_total = end - begin;
+        const std::size_t n_use = std::min<std::size_t>(threads, n_total);
+        const std::size_t n_workers = n_use - 1;
+        if (n_workers == 0) {
+            for (std::size_t i = begin; i < end; ++i) fn(i);
+            return;
+        }
+        std::unique_lock<std::mutex> run_lk(run_mu_, std::try_to_lock);
+        if (!run_lk.owns_lock()) {
+            // Re-entrant or concurrent outer caller: execute inline to avoid deadlock/oversubscription.
+            for (std::size_t i = begin; i < end; ++i) fn(i);
+            return;
+        }
+        ensureWorkers(n_workers);
+        std::atomic<std::size_t> cursor{begin};
+        std::atomic<std::size_t> done{0};
+        std::exception_ptr first_exc = nullptr;
+        std::mutex exc_mu;
+        auto work = [&]() {
+            try {
+                while (true) {
+                    const std::size_t idx = cursor.fetch_add(1, std::memory_order_relaxed);
+                    if (idx >= end) break;
+                    fn(idx);
+                }
+            } catch (...) {
+                std::lock_guard<std::mutex> elk(exc_mu);
+                if (!first_exc) first_exc = std::current_exception();
+            }
+        };
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            task_ = [&]() {
+                work();
+                if (done.fetch_add(1, std::memory_order_acq_rel) + 1 == n_workers) {
+                    std::lock_guard<std::mutex> dlk(done_mu_);
+                    done_cv_.notify_one();
+                }
+            };
+            active_workers_ = n_workers;
+            ++gen_;
+        }
+        cv_.notify_all();
+        work();
+        {
+            std::unique_lock<std::mutex> dlk(done_mu_);
+            done_cv_.wait(dlk, [&]() { return done.load(std::memory_order_acquire) >= n_workers; });
+        }
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            task_ = nullptr;
+            active_workers_ = 0;
+        }
+        if (first_exc) std::rethrow_exception(first_exc);
+    }
+
+private:
+    void ensureWorkers(std::size_t need) {
+        std::lock_guard<std::mutex> lk(mu_);
+        while (workers_.size() < need) {
+            const std::size_t wid = workers_.size();
+            workers_.emplace_back([this, wid]() { workerLoop(wid); });
+        }
+    }
+
+    void workerLoop(std::size_t wid) {
+        std::uint64_t seen_gen = 0;
+        while (true) {
+            std::function<void()> fn;
+            {
+                std::unique_lock<std::mutex> lk(mu_);
+                cv_.wait(lk, [&]() { return stop_ || (gen_ != seen_gen && wid < active_workers_); });
+                if (stop_) return;
+                seen_gen = gen_;
+                fn = task_;
+            }
+            if (fn) fn();
+        }
+    }
+
+    std::mutex run_mu_;
+    std::mutex mu_;
+    std::condition_variable cv_;
+    std::mutex done_mu_;
+    std::condition_variable done_cv_;
+    std::vector<std::thread> workers_;
+    std::function<void()> task_;
+    std::size_t active_workers_ = 0;
+    std::uint64_t gen_ = 0;
+    bool stop_ = false;
+};
+
+inline SearchPool& globalSearchPool() {
+    static SearchPool pool;
+    return pool;
+}
+
+}  // namespace detail
 
 // =================================================================== worlds
 
@@ -189,6 +317,7 @@ struct RaceOptions {
     double race_z = 2.0;   // a move is dropped when the leader beats it by race_z standard errors
     double z = 1.0;        // the search overrules the prior move only by z standard errors (z < 0: always argmax)
     double margin = 0.1;   // ... and by more than this margin
+    unsigned threads = 1;  // > 1: parallelize world evaluations across a persistent work-stealing thread pool
 };
 
 /**
@@ -233,16 +362,21 @@ RaceResult<Move> raceMoves(const std::vector<Move>& moves, const std::vector<dou
     std::size_t w_eval = 0;
 
     if (exact || !o.race || nw <= std::size_t(std::max(1, o.race_min)) || nm <= 2) {
-        for (std::size_t w = 0; w < nw; ++w) evaluate(w, alive, val);
+        detail::globalSearchPool().parallelRange(0, nw, o.threads,
+                                                 [&](std::size_t w) { evaluate(w, alive, val); });
         w_eval = nw;
     } else {
         std::size_t next_check = std::size_t(std::max(8, o.race_min));
         const std::size_t step = std::size_t(std::max(8, o.race_step));
         std::size_t n_alive = nm;
-        for (std::size_t w = 0; w < nw; ++w) {
-            evaluate(w, alive, val);
-            w_eval = w + 1;
-            if (w_eval >= next_check && w_eval < nw && n_alive > 1) {
+        std::size_t w_start = 0;
+        while (w_start < nw && n_alive > 1) {
+            const std::size_t w_end = std::min(nw, next_check);
+            detail::globalSearchPool().parallelRange(w_start, w_end, o.threads,
+                                                     [&](std::size_t w) { evaluate(w, alive, val); });
+            w_eval = w_end;
+            w_start = w_end;
+            if (w_eval < nw && n_alive > 1) {
                 next_check = w_eval + step;
                 double sw = 0.0, sw2 = 0.0;
                 for (std::size_t k = 0; k < w_eval; ++k) {
@@ -274,7 +408,6 @@ RaceResult<Move> raceMoves(const std::vector<Move>& moves, const std::vector<dou
                         --n_alive;
                     }
                 }
-                if (n_alive <= 1) break;
             }
         }
     }
