@@ -164,19 +164,27 @@ public:
         out_dim_ = hdr[4];
         std::vector<float> w1(std::size_t(h1_) * std::size_t(state_dim_));
         b1_.resize(std::size_t(h1_));
-        w2_.resize(std::size_t(h2_) * std::size_t(h1_));
+        std::vector<float> w2(std::size_t(h2_) * std::size_t(h1_));
         b2_.resize(std::size_t(h2_));
-        w3_.resize(std::size_t(out_dim_) * std::size_t(h2_));
+        std::vector<float> w3(std::size_t(out_dim_) * std::size_t(h2_));
         b3_.resize(std::size_t(out_dim_));
         if (!readBytes(in, w1.data(), w1.size() * sizeof(float)) || !readBytes(in, b1_.data(), b1_.size() * sizeof(float)) ||
-            !readBytes(in, w2_.data(), w2_.size() * sizeof(float)) || !readBytes(in, b2_.data(), b2_.size() * sizeof(float)) ||
-            !readBytes(in, w3_.data(), w3_.size() * sizeof(float)) || !readBytes(in, b3_.data(), b3_.size() * sizeof(float)))
+            !readBytes(in, w2.data(), w2.size() * sizeof(float)) || !readBytes(in, b2_.data(), b2_.size() * sizeof(float)) ||
+            !readBytes(in, w3.data(), w3.size() * sizeof(float)) || !readBytes(in, b3_.data(), b3_.size() * sizeof(float)))
             return false;
-        // W1 [h1, state_dim] -> [state_dim, h1]: one contiguous column per input
+        // Transpose W1, W2, W3 to column-major [in, out] for sparse-input & sparse-ReLU SAXPY
         w1_t_.resize(w1.size());
         for (int j = 0; j < h1_; ++j)
             for (int i = 0; i < state_dim_; ++i)
                 w1_t_[std::size_t(i) * std::size_t(h1_) + std::size_t(j)] = w1[std::size_t(j) * std::size_t(state_dim_) + std::size_t(i)];
+        w2_t_.resize(w2.size());
+        for (int o = 0; o < h2_; ++o)
+            for (int j = 0; j < h1_; ++j)
+                w2_t_[std::size_t(j) * std::size_t(h2_) + std::size_t(o)] = w2[std::size_t(o) * std::size_t(h1_) + std::size_t(j)];
+        w3_t_.resize(w3.size());
+        for (int o = 0; o < out_dim_; ++o)
+            for (int j = 0; j < h2_; ++j)
+                w3_t_[std::size_t(j) * std::size_t(out_dim_) + std::size_t(o)] = w3[std::size_t(o) * std::size_t(h2_) + std::size_t(j)];
         loaded_ = true;
         return true;
     }
@@ -190,26 +198,27 @@ public:
         using namespace cardbot::nn;
         thread_local std::vector<float> z1, z2;
         z1.assign(b1_.begin(), b1_.end());
-        z2.resize(std::size_t(h2_));
         for (int i = 0; i < state_dim_; ++i) {
             const float xi = state[i];
             if (xi == 0.0f) continue;
             axpy(xi, w1_t_.data() + std::size_t(i) * std::size_t(h1_), z1.data(), h1_);
         }
-        for (int j = 0; j < h1_; ++j)
-            if (z1[std::size_t(j)] < 0.0f) z1[std::size_t(j)] = 0.0f;
-        for (int o = 0; o < h2_; ++o) {
-            const float acc = b2_[std::size_t(o)] + dotProduct(w2_.data() + std::size_t(o) * std::size_t(h1_), z1.data(), h1_);
-            z2[std::size_t(o)] = acc > 0.0f ? acc : 0.0f;
+        z2.assign(b2_.begin(), b2_.end());
+        for (int j = 0; j < h1_; ++j) {
+            const float v = z1[std::size_t(j)];
+            if (v > 0.0f) axpy(v, w2_t_.data() + std::size_t(j) * std::size_t(h2_), z2.data(), h2_);
         }
-        for (int o = 0; o < out_dim_; ++o)
-            logits_out[o] = b3_[std::size_t(o)] + dotProduct(w3_.data() + std::size_t(o) * std::size_t(h2_), z2.data(), h2_);
+        std::memcpy(logits_out, b3_.data(), std::size_t(out_dim_) * sizeof(float));
+        for (int j = 0; j < h2_; ++j) {
+            const float v = z2[std::size_t(j)];
+            if (v > 0.0f) axpy(v, w3_t_.data() + std::size_t(j) * std::size_t(out_dim_), logits_out, out_dim_);
+        }
     }
 
 private:
     bool loaded_ = false;
     int version_ = 0, state_dim_ = 0, h1_ = 0, h2_ = 0, out_dim_ = 0;
-    std::vector<float> w1_t_, b1_, w2_, b2_, w3_, b3_;
+    std::vector<float> w1_t_, b1_, w2_t_, b2_, w3_t_, b3_;
 };
 
 /**
